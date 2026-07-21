@@ -1,0 +1,5244 @@
+# 1. Purpose, Scope, and Design Philosophy
+
+## 1.1 Purpose
+
+This document specifies the architecture, methodology, and engineering requirements of the Calibration System used by the Tapper Recognition System.
+
+The Calibration System is responsible for constructing the statistical recognition models that enable deterministic runtime classification of acoustic tap events. It achieves this by collecting representative user-generated samples, validating their quality, extracting acoustic features, and generating statistical profiles for each supported interaction zone.
+
+Calibration is a supervised process that is performed prior to runtime recognition. Unlike the Recognition Engine, which classifies unknown tap events, the Calibration Engine establishes the reference models against which future taps are compared.
+
+The primary output of calibration is a validated, versioned Calibration Profile suitable for persistent storage and subsequent runtime use.
+
+---
+
+## 1.2 Scope
+
+This specification defines the complete calibration lifecycle, including:
+
+- calibration architecture
+- calibration workflow
+- interaction zone definition
+- sample acquisition
+- sample validation
+- quality assessment
+- feature extraction during calibration
+- statistical model generation
+- threshold generation
+- profile persistence
+- recalibration procedures
+- failure handling
+- performance requirements
+
+This document does not define:
+
+- digital signal processing algorithms
+- runtime recognition
+- command execution
+- persistence formats
+- application user interface
+
+These subjects are specified in their respective engineering documents.
+
+---
+
+## 1.3 Design Philosophy
+
+The Calibration System has been designed around several fundamental engineering principles.
+
+### Deterministic Calibration
+
+Identical calibration inputs shall always produce identical calibration outputs.
+
+The calibration process shall contain no stochastic components, randomized sampling, or adaptive behavior that could produce different statistical models from identical input data.
+
+---
+
+### Statistical Integrity
+
+Every statistical parameter generated during calibration shall be derived directly from validated Feature Vectors using deterministic mathematical procedures.
+
+No manually adjusted parameters shall influence recognition unless explicitly defined within this specification.
+
+---
+
+### Data Quality Before Quantity
+
+Calibration accuracy depends primarily on the quality of collected samples rather than the absolute number of samples.
+
+Poor-quality samples shall be rejected immediately rather than incorporated into the statistical model.
+
+---
+
+### Separation of Responsibilities
+
+Calibration is responsible only for constructing recognition models.
+
+It shall not:
+
+- recognize taps
+- execute commands
+- modify runtime behavior
+- perform application-specific operations
+
+---
+
+### Hardware Awareness
+
+Calibration profiles represent the acoustic characteristics of a specific hardware configuration.
+
+Consequently, calibration data shall be considered device-specific unless explicitly validated for portability.
+
+---
+
+### User Simplicity
+
+Despite the complexity of the underlying signal processing and statistical analysis, the calibration workflow shall remain simple, predictable, and understandable for end users.
+
+The system shall guide users through the calibration process while minimizing unnecessary interaction.
+
+---
+
+### Extensibility
+
+The calibration architecture shall permit future recognition algorithms, additional interaction zones, and new feature extraction techniques without requiring fundamental redesign.
+
+---
+
+## 1.4 Relationship to Other Specifications
+
+This document depends upon the following engineering specifications.
+
+| Document | Purpose |
+|----------|---------|
+| 03_DSP.md | Signal processing performed during calibration |
+| 04_ALGORITHM.md | Statistical algorithms and recognition mathematics |
+| 05_DATA_MODELS.md | Calibration-related data structures |
+
+The output of this specification is the Calibration Profile consumed by the Recognition Engine during runtime.
+
+---
+
+## 1.5 Engineering Objectives
+
+The Calibration System shall satisfy the following objectives.
+
+- Produce statistically accurate recognition models
+- Minimize calibration time
+- Maximize recognition reliability
+- Reject poor-quality samples automatically
+- Support deterministic regeneration
+- Persist validated calibration profiles
+- Remain independent of user interface implementation
+- Support future algorithm versions
+
+---
+
+## 1.6 Terminology
+
+Throughout this document:
+
+- **Sample** refers to a single validated tap collected during calibration.
+- **Interaction Zone** refers to one predefined physical tapping location.
+- **Calibration Session** refers to the complete process of calibrating all interaction zones.
+- **Calibration Profile** refers to the persistent statistical model generated by calibration.
+
+---
+
+## 1.7 Summary
+
+This specification defines the complete calibration subsystem responsible for transforming user-generated acoustic tap samples into deterministic statistical recognition models. By emphasizing deterministic processing, statistical correctness, high-quality sample acquisition, and strict separation of concerns, the Calibration System establishes the mathematical foundation upon which reliable runtime recognition is built.
+
+# 2. Calibration Architecture
+
+## 2.1 Overview
+
+The Calibration Architecture defines the complete processing pipeline responsible for transforming user-generated acoustic tap samples into statistically valid recognition models.
+
+Calibration is a deterministic, multi-stage process in which every subsystem performs a single well-defined responsibility. The output of one stage becomes the validated input of the next, ensuring reproducibility, modularity, and mathematical correctness.
+
+Unlike runtime recognition, which operates continuously on live audio, calibration is an interactive and finite process that concludes with the generation of a persistent Calibration Profile.
+
+The architecture defined herein serves as the canonical reference implementation for all future versions of the Tapper Recognition System.
+
+---
+
+## 2.2 Design Objectives
+
+The Calibration Architecture has been designed to achieve the following objectives:
+
+- Produce statistically representative calibration profiles
+- Maintain deterministic processing
+- Ensure high-quality sample acquisition
+- Minimize subsystem coupling
+- Support hardware-specific calibration
+- Enable future algorithm evolution
+- Preserve implementation independence
+
+Each architectural component shall have a clearly defined responsibility and interface.
+
+---
+
+# 2.3 Architectural Principles
+
+The Calibration System adheres to the following fundamental architectural principles.
+
+### Layered Processing
+
+Calibration is organized as a sequence of processing layers.
+
+Each layer consumes validated outputs from the preceding layer and produces validated outputs for the subsequent layer.
+
+Direct communication between non-adjacent layers is prohibited.
+
+---
+
+### Deterministic Execution
+
+Every processing stage shall produce identical outputs when presented with identical inputs.
+
+The architecture shall not employ probabilistic algorithms, randomized sampling, or adaptive learning during calibration.
+
+---
+
+### Validation Before Progression
+
+No subsystem shall forward invalid data.
+
+Every processing stage performs validation before publishing its results.
+
+Rejected data shall terminate processing at the current stage.
+
+---
+
+### Immutable Data Flow
+
+Outputs published by each subsystem become immutable.
+
+Subsequent processing stages consume these immutable objects without modification.
+
+This guarantees reproducibility and simplifies concurrent execution.
+
+---
+
+### Separation of Concerns
+
+Each subsystem shall perform exactly one primary responsibility.
+
+Signal processing, feature extraction, statistical analysis, persistence, and user interaction remain independent components.
+
+---
+
+# 2.4 High-Level Architecture
+
+The overall calibration pipeline is illustrated below.
+
+```
+                 User
+
+                  │
+
+                  ▼
+
+        Calibration Controller
+
+                  │
+
+                  ▼
+
+         Audio Acquisition Engine
+
+                  │
+
+                  ▼
+
+           DSP Processing Engine
+
+                  │
+
+                  ▼
+
+         Feature Extraction Engine
+
+                  │
+
+                  ▼
+
+          Sample Validation Engine
+
+                  │
+
+                  ▼
+
+      Statistical Generation Engine
+
+                  │
+
+                  ▼
+
+        Calibration Profile Builder
+
+                  │
+
+                  ▼
+
+          Persistence Subsystem
+```
+
+Information flows strictly from top to bottom.
+
+No subsystem may bypass an intermediate processing stage.
+
+---
+
+# 2.5 Architectural Components
+
+The Calibration Architecture consists of seven primary subsystems.
+
+---
+
+## Calibration Controller
+
+The Calibration Controller coordinates the entire calibration process.
+
+Responsibilities include:
+
+- session initialization
+- interaction zone sequencing
+- workflow coordination
+- progress management
+- error recovery
+- session completion
+
+The controller performs orchestration only.
+
+It shall not perform signal processing or statistical computation.
+
+---
+
+## Audio Acquisition Engine
+
+The Audio Acquisition Engine captures microphone input corresponding to user tap events.
+
+Inputs:
+
+- microphone stream
+
+Outputs:
+
+- AudioBuffer
+- AudioFrame
+
+Responsibilities:
+
+- microphone management
+- sample acquisition
+- timestamp generation
+- input buffering
+
+---
+
+## DSP Processing Engine
+
+The DSP Processing Engine transforms raw audio into frequency-domain representations suitable for feature extraction.
+
+Responsibilities include:
+
+- filtering
+- normalization
+- windowing
+- FFT computation
+- spectrum generation
+
+This subsystem is fully specified in **03_DSP.md**.
+
+---
+
+## Feature Extraction Engine
+
+The Feature Extraction Engine computes the canonical Feature Vector from processed audio.
+
+Responsibilities include:
+
+- amplitude analysis
+- temporal analysis
+- spectral analysis
+- feature normalization
+- FeatureVector generation
+
+Outputs shall conform to the Feature Models defined in **05_DATA_MODELS.md**.
+
+---
+
+## Sample Validation Engine
+
+The Sample Validation Engine determines whether a captured tap is suitable for inclusion in the calibration dataset.
+
+Validation criteria include:
+
+- sufficient signal strength
+- acceptable noise level
+- complete tap event
+- valid feature values
+- statistical consistency
+
+Invalid samples shall be rejected immediately.
+
+---
+
+## Statistical Generation Engine
+
+The Statistical Generation Engine transforms validated samples into statistical recognition models.
+
+Responsibilities include:
+
+- mean vector computation
+- covariance matrix generation
+- inverse covariance computation
+- threshold calculation
+- statistical validation
+
+This subsystem performs no audio processing.
+
+---
+
+## Calibration Profile Builder
+
+The Calibration Profile Builder assembles the final persistent calibration profile.
+
+Responsibilities include:
+
+- profile construction
+- metadata generation
+- version assignment
+- validation
+- persistence preparation
+
+The generated profile becomes the canonical runtime reference for recognition.
+
+---
+
+# 2.6 Calibration Processing Pipeline
+
+The complete calibration pipeline is shown below.
+
+```
+Microphone Input
+
+↓
+
+AudioBuffer
+
+↓
+
+AudioFrame
+
+↓
+
+Filtered Signal
+
+↓
+
+FFTResult
+
+↓
+
+Spectrum
+
+↓
+
+FeatureVector
+
+↓
+
+Validated Sample
+
+↓
+
+Zone Statistics
+
+↓
+
+Calibration Profile
+
+↓
+
+Persistent Storage
+```
+
+Each stage publishes immutable outputs.
+
+Processing proceeds only after successful validation.
+
+---
+
+# 2.7 Interaction Between Components
+
+The architectural interactions are summarized below.
+
+```
+Calibration Controller
+        │
+        ▼
+Audio Acquisition
+        │
+        ▼
+DSP Engine
+        │
+        ▼
+Feature Extraction
+        │
+        ▼
+Sample Validation
+        │
+        ▼
+Statistical Generator
+        │
+        ▼
+Profile Builder
+        │
+        ▼
+Persistence
+```
+
+Each subsystem communicates only with adjacent layers.
+
+Circular dependencies are prohibited.
+
+---
+
+# 2.8 Ownership Model
+
+Ownership transfers between subsystems according to the following hierarchy.
+
+```
+Calibration Controller
+
+↓
+
+Audio Acquisition
+
+↓
+
+DSP Engine
+
+↓
+
+Feature Extraction
+
+↓
+
+Sample Validation
+
+↓
+
+Statistical Generator
+
+↓
+
+Profile Builder
+
+↓
+
+Persistence Layer
+```
+
+Each subsystem owns objects only during processing.
+
+Published objects become immutable and may be safely shared.
+
+---
+
+# 2.9 Failure Boundaries
+
+Each subsystem defines an independent failure boundary.
+
+Failures shall not propagate uncontrolled between architectural layers.
+
+Typical failures include:
+
+| Subsystem | Example Failure |
+|-----------|-----------------|
+| Audio Acquisition | Microphone unavailable |
+| DSP Engine | Invalid audio frame |
+| Feature Extraction | Invalid feature vector |
+| Sample Validation | Poor-quality tap |
+| Statistical Generator | Singular covariance matrix |
+| Profile Builder | Invalid calibration profile |
+| Persistence | Failed profile save |
+
+Each subsystem shall report failures through the standardized Error Models defined in **05_DATA_MODELS.md**.
+
+---
+
+# 2.10 Architectural Constraints
+
+The Calibration Architecture shall satisfy the following constraints.
+
+- No subsystem may modify published data.
+- Audio processing shall remain independent of statistics.
+- Statistical generation shall remain independent of user interaction.
+- Persistence shall not influence calibration computation.
+- Recognition algorithms shall not execute during calibration.
+- All subsystem interfaces shall remain strongly typed.
+
+These constraints preserve modularity and implementation independence.
+
+---
+
+# 2.11 Summary
+
+The Calibration Architecture establishes a deterministic, layered processing framework that transforms raw acoustic tap events into persistent statistical recognition profiles. By partitioning calibration into specialized subsystems with immutable data flow, explicit ownership, and well-defined failure boundaries, the architecture achieves high modularity, mathematical correctness, and long-term maintainability while providing a stable foundation for future algorithmic enhancements.
+
+The following section defines the **Calibration State Machine**, specifying the operational states, transitions, and control flow governing a complete calibration session.
+
+# 3. Calibration State Machine
+
+## 3.1 Overview
+
+The Calibration State Machine defines the operational behavior of the Calibration Engine throughout a calibration session.
+
+It specifies the discrete states, permissible transitions, entry and exit conditions, and failure handling required to ensure deterministic execution.
+
+Unlike the User Calibration Workflow, which describes the user's interaction with the system, the Calibration State Machine describes the internal behavior of the Calibration Engine itself.
+
+Every calibration session shall follow the state machine defined in this specification.
+
+---
+
+## 3.2 Design Objectives
+
+The Calibration State Machine has been designed to satisfy the following objectives:
+
+- Ensure deterministic execution
+- Prevent invalid state transitions
+- Simplify subsystem coordination
+- Support graceful error recovery
+- Maintain calibration consistency
+- Enable future extensibility
+
+Each calibration operation shall occur within exactly one defined state.
+
+---
+
+# 3.3 State Definitions
+
+Version 1 defines the following calibration states.
+
+```swift
+enum CalibrationState {
+
+    case idle
+
+    case initializing
+
+    case awaitingSample
+
+    case processingSample
+
+    case validatingSample
+
+    case updatingStatistics
+
+    case changingZone
+
+    case generatingProfile
+
+    case persistingProfile
+
+    case completed
+
+    case failed
+
+}
+```
+
+Each state represents a distinct operational phase of the calibration process.
+
+---
+
+# 3.4 State Descriptions
+
+## Idle
+
+The Calibration Engine is inactive.
+
+### Entry Conditions
+
+- application launch
+- calibration completed
+- calibration cancelled
+
+### Responsibilities
+
+- release calibration resources
+- clear temporary data
+- await calibration request
+
+### Exit Condition
+
+Calibration requested by the user.
+
+---
+
+## Initializing
+
+The engine prepares the calibration environment.
+
+Responsibilities include:
+
+- microphone initialization
+- runtime validation
+- subsystem startup
+- memory allocation
+- session creation
+
+The engine shall not collect samples while initializing.
+
+---
+
+## Awaiting Sample
+
+The engine waits for the user to perform the requested tap.
+
+Responsibilities:
+
+- monitor microphone input
+- display current interaction zone
+- detect tap events
+
+No statistical processing occurs in this state.
+
+---
+
+## Processing Sample
+
+A tap has been detected.
+
+Responsibilities:
+
+- capture audio
+- perform DSP processing
+- extract FeatureVector
+
+Outputs:
+
+- processed sample
+- FeatureVector
+
+---
+
+## Validating Sample
+
+The extracted FeatureVector undergoes quality assessment.
+
+Validation includes:
+
+- signal strength
+- background noise
+- clipping detection
+- feature validity
+- statistical plausibility
+
+Accepted samples proceed to the next state.
+
+Rejected samples return to **Awaiting Sample**.
+
+---
+
+## Updating Statistics
+
+A validated sample is incorporated into the current interaction zone.
+
+Responsibilities:
+
+- store sample
+- update sample count
+- determine completion status
+
+If additional samples are required:
+
+```
+Updating Statistics
+
+↓
+
+Awaiting Sample
+```
+
+Otherwise:
+
+```
+Updating Statistics
+
+↓
+
+Changing Zone
+```
+
+---
+
+## Changing Zone
+
+The Calibration Controller advances to the next interaction zone.
+
+Responsibilities:
+
+- update target zone
+- reset temporary counters
+- notify user
+- prepare sample acquisition
+
+If all zones are complete, transition to **Generating Profile**.
+
+---
+
+## Generating Profile
+
+The Statistical Generation Engine computes the final calibration profile.
+
+Responsibilities:
+
+- compute mean vectors
+- compute covariance matrices
+- compute thresholds
+- validate statistical model
+- assemble CalibrationProfile
+
+No further user interaction occurs during this state.
+
+---
+
+## Persisting Profile
+
+The completed CalibrationProfile is written to persistent storage.
+
+Responsibilities:
+
+- validate profile
+- serialize profile
+- write to storage
+- verify persistence
+
+Successful completion transitions to **Completed**.
+
+---
+
+## Completed
+
+Calibration completed successfully.
+
+Responsibilities:
+
+- activate CalibrationProfile
+- release temporary resources
+- notify application
+- transition to runtime operation
+
+The generated profile becomes available to the Recognition Engine.
+
+---
+
+## Failed
+
+Calibration terminated unsuccessfully.
+
+Responsibilities:
+
+- discard incomplete profile
+- release resources
+- report failure
+- return to Idle
+
+Failed calibration sessions shall never produce active CalibrationProfiles.
+
+---
+
+# 3.5 State Transition Diagram
+
+The complete state machine is illustrated below.
+
+```
+Idle
+
+↓
+
+Initializing
+
+↓
+
+Awaiting Sample
+
+↓
+
+Processing Sample
+
+↓
+
+Validating Sample
+
+├── Invalid ───────────────┐
+│                          │
+└────────► Awaiting Sample │
+                           │
+            Valid          │
+               │           │
+               ▼           │
+
+Updating Statistics
+
+├── More Samples ─────────► Awaiting Sample
+
+└── Zone Complete
+
+        │
+
+        ▼
+
+Changing Zone
+
+├── More Zones ───────────► Awaiting Sample
+
+└── Finished
+
+        │
+
+        ▼
+
+Generating Profile
+
+↓
+
+Persisting Profile
+
+↓
+
+Completed
+
+Any Failure
+
+↓
+
+Failed
+
+↓
+
+Idle
+```
+
+No other transitions are permitted.
+
+---
+
+# 3.6 State Transition Rules
+
+The following transition rules shall apply.
+
+| Current State | Allowed Next State |
+|---------------|-------------------|
+| Idle | Initializing |
+| Initializing | Awaiting Sample, Failed |
+| Awaiting Sample | Processing Sample, Failed |
+| Processing Sample | Validating Sample, Failed |
+| Validating Sample | Awaiting Sample, Updating Statistics |
+| Updating Statistics | Awaiting Sample, Changing Zone |
+| Changing Zone | Awaiting Sample, GeneratingProfile |
+| Generating Profile | Persisting Profile, Failed |
+| Persisting Profile | Completed, Failed |
+| Completed | Idle |
+| Failed | Idle |
+
+Transitions not listed above are prohibited.
+
+---
+
+# 3.7 Entry and Exit Actions
+
+Every state defines explicit entry and exit actions.
+
+### Entry Actions
+
+Examples include:
+
+- allocate resources
+- initialize timers
+- reset counters
+- prepare subsystem
+
+### Exit Actions
+
+Examples include:
+
+- validate outputs
+- publish immutable models
+- release temporary objects
+- notify controller
+
+State transitions shall occur only after exit actions complete successfully.
+
+---
+
+# 3.8 Error Handling
+
+Errors occurring within a state shall be handled locally whenever possible.
+
+Examples:
+
+- invalid sample → retry
+- excessive noise → retry
+- profile generation failure → terminate calibration
+- storage failure → terminate calibration
+
+Unrecoverable failures transition directly to **Failed**.
+
+---
+
+# 3.9 Timeout Handling
+
+The Calibration Engine may define implementation-specific timeout limits.
+
+Possible timeout conditions include:
+
+- user inactivity
+- microphone failure
+- prolonged silence
+
+Upon timeout:
+
+```
+Current State
+
+↓
+
+Failed
+
+↓
+
+Idle
+```
+
+Timeout duration is implementation-defined and outside the scope of this specification.
+
+---
+
+# 3.10 Thread Safety
+
+Only one Calibration State Machine instance shall be active at any time.
+
+Accordingly:
+
+- state transitions shall be serialized
+- published models shall remain immutable
+- concurrent calibration sessions are prohibited
+- subsystem communication shall remain deterministic
+
+This guarantees predictable calibration behavior.
+
+---
+
+# 3.11 Design Constraints
+
+The Calibration State Machine shall satisfy the following constraints.
+
+- exactly one active state
+- deterministic transitions
+- explicit failure handling
+- no hidden transitions
+- no concurrent state execution
+- immutable outputs after publication
+
+These constraints ensure reproducibility and simplify verification.
+
+---
+
+# 3.12 Summary
+
+The Calibration State Machine defines the deterministic operational behavior of the Calibration Engine, governing every phase from initialization to successful profile persistence. By restricting execution to well-defined states, explicit transitions, and controlled failure paths, the state machine ensures that calibration proceeds predictably, safely, and reproducibly while providing a robust operational foundation for the remainder of the calibration subsystem.
+
+The following section defines the **Interaction Zones**, specifying the physical calibration regions, their logical representation, and the engineering requirements governing zone definition and recognition.
+
+# 4. Interaction Zones
+
+## 4.1 Overview
+
+Interaction Zones define the physical regions of the device that the user intentionally taps during both calibration and runtime recognition.
+
+Each Interaction Zone corresponds to a unique statistical model generated during calibration and represents a distinct acoustic signature within the Recognition Engine.
+
+The purpose of Interaction Zones is to partition the device surface into well-defined regions whose acoustic responses are sufficiently distinguishable to enable deterministic classification.
+
+Version 1 of the Tapper Recognition System supports four interaction zones.
+
+---
+
+## 4.2 Design Objectives
+
+The Interaction Zone architecture has been designed to satisfy the following objectives:
+
+- Provide spatially distinct interaction regions
+- Maximize acoustic separability
+- Simplify user interaction
+- Support deterministic recognition
+- Enable statistical independence
+- Allow future expansion
+
+Each interaction zone shall represent a mutually exclusive physical region.
+
+---
+
+# 4.3 Canonical Interaction Zones
+
+Version 1 defines four interaction zones.
+
+```
+┌──────────────────────────────┐
+
+        Top Left      Top Right
+
+
+        Bottom Left   Bottom Right
+
+└──────────────────────────────┘
+```
+
+These zones represent logical regions rather than precise physical coordinates.
+
+---
+
+## 4.4 Zone Enumeration
+
+Interaction Zones are represented using the canonical enumeration defined in the Data Model Specification.
+
+```swift
+enum InteractionZone {
+
+    case topLeft
+
+    case topRight
+
+    case bottomLeft
+
+    case bottomRight
+
+}
+```
+
+Every calibration sample shall belong to exactly one interaction zone.
+
+---
+
+# 4.5 Zone Characteristics
+
+Each interaction zone shall satisfy the following characteristics.
+
+### Physical Consistency
+
+Users should tap approximately the same physical location throughout calibration.
+
+Small variations are expected and accounted for statistically.
+
+---
+
+### Acoustic Distinctiveness
+
+The acoustic response generated by one interaction zone should differ measurably from every other interaction zone.
+
+Zones exhibiting excessive similarity may reduce recognition accuracy.
+
+---
+
+### Repeatability
+
+Repeated taps within the same interaction zone should generate statistically similar Feature Vectors.
+
+Repeatability is a primary requirement for successful calibration.
+
+---
+
+### Exclusivity
+
+Each physical tap belongs to one and only one interaction zone.
+
+Overlapping zones are prohibited.
+
+---
+
+# 4.6 Zone Geometry
+
+The Tapper Recognition System intentionally avoids defining interaction zones using absolute physical dimensions.
+
+Instead, zones are defined conceptually relative to the device.
+
+```
+        ┌──────────────────────┐
+
+        │ TL            TR      │
+
+        │                      │
+
+        │                      │
+
+        │ BL            BR      │
+
+        └──────────────────────┘
+```
+
+This abstraction permits support for devices with varying physical sizes while preserving the logical interaction model.
+
+---
+
+# 4.7 Calibration Requirements
+
+Each interaction zone shall be calibrated independently.
+
+The Calibration Engine shall ensure:
+
+- sufficient samples collected
+- samples belong to the correct zone
+- samples satisfy quality requirements
+- statistical model generated successfully
+
+Calibration of one interaction zone shall not influence another.
+
+---
+
+# 4.8 Statistical Independence
+
+Each interaction zone generates an independent statistical model.
+
+```
+Top Left
+
+↓
+
+Zone Profile A
+
+
+Top Right
+
+↓
+
+Zone Profile B
+
+
+Bottom Left
+
+↓
+
+Zone Profile C
+
+
+Bottom Right
+
+↓
+
+Zone Profile D
+```
+
+Recognition compares unknown taps against every Zone Profile independently.
+
+No zone shares statistical parameters with another.
+
+---
+
+# 4.9 Zone Transition
+
+During calibration the Calibration Controller activates only one interaction zone at a time.
+
+```
+Top Left
+
+↓
+
+Top Right
+
+↓
+
+Bottom Left
+
+↓
+
+Bottom Right
+```
+
+Alternative presentation orders are permitted provided every required interaction zone is calibrated exactly once.
+
+---
+
+# 4.10 Sample Association
+
+Every accepted calibration sample shall be permanently associated with the interaction zone from which it was collected.
+
+```
+User Tap
+
+↓
+
+Current Active Zone
+
+↓
+
+Feature Extraction
+
+↓
+
+Validation
+
+↓
+
+Zone Sample Collection
+```
+
+A validated sample shall never be reassigned to a different interaction zone.
+
+---
+
+# 4.11 Zone Validation
+
+The Calibration Engine shall verify that every interaction zone satisfies the minimum calibration requirements before generating a Calibration Profile.
+
+Validation shall confirm:
+
+- minimum sample count achieved
+- acceptable average sample quality
+- valid statistical model generated
+- threshold computed successfully
+
+Failure of any interaction zone invalidates the entire calibration session.
+
+---
+
+# 4.12 Future Expansion
+
+The Interaction Zone architecture has been designed to support additional logical regions in future versions.
+
+Possible extensions include:
+
+- center interaction zone
+- edge interaction zones
+- corner subdivisions
+- user-defined zones
+- multi-device layouts
+
+Introduction of additional zones shall require:
+
+- updated InteractionZone enumeration
+- revised calibration workflow
+- regenerated statistical models
+- new algorithm version
+
+---
+
+# 4.13 Engineering Constraints
+
+The following constraints shall apply.
+
+- Interaction Zones shall remain mutually exclusive.
+- Every accepted sample belongs to exactly one zone.
+- Zone definitions shall remain independent of screen resolution.
+- Recognition shall treat every zone equally.
+- Statistical models shall remain isolated between zones.
+
+These constraints preserve deterministic recognition behavior.
+
+---
+
+# 4.14 Relationship to Other Components
+
+Interaction Zones form the link between user input and statistical recognition.
+
+```
+User
+
+↓
+
+Interaction Zone
+
+↓
+
+Calibration Sample
+
+↓
+
+Zone Profile
+
+↓
+
+Calibration Profile
+
+↓
+
+Recognition Engine
+```
+
+Runtime recognition consumes these Zone Profiles without modifying their definition.
+
+---
+
+# 4.15 Summary
+
+Interaction Zones define the logical spatial framework upon which the Tapper Recognition System is built. By partitioning the device into acoustically distinct, statistically independent regions, the system establishes the basis for reliable calibration and deterministic runtime recognition. The abstraction of logical zones, rather than fixed physical coordinates, ensures portability across device sizes while preserving architectural consistency and future extensibility.
+
+The following section defines **Sample Collection**, detailing the acquisition of calibration samples, minimum sampling requirements, collection strategies, and the engineering principles governing statistically representative datasets.
+
+# 5. Sample Collection
+
+## 5.1 Overview
+
+Sample Collection is the process of acquiring representative tap events from each Interaction Zone during a calibration session.
+
+The objective of sample collection is to build a dataset that accurately captures the acoustic characteristics of each interaction zone while minimizing the influence of accidental noise, inconsistent user behavior, and environmental disturbances.
+
+The quality of the generated Calibration Profile depends directly on the quality and consistency of the collected samples.
+
+Unlike runtime recognition, where every detected tap must be classified, calibration prioritizes collecting high-quality data over rapid acquisition.
+
+---
+
+## 5.2 Objectives
+
+The Sample Collection subsystem shall satisfy the following objectives:
+
+- Acquire representative tap events
+- Ensure adequate statistical coverage
+- Minimize user effort
+- Reject invalid acquisitions
+- Maintain deterministic ordering
+- Produce reproducible datasets
+
+---
+
+# 5.3 Sample Definition
+
+A **Calibration Sample** represents a single validated tap event captured from one Interaction Zone.
+
+Each sample consists of:
+
+- raw audio
+- processed audio
+- extracted Feature Vector
+- timestamp
+- interaction zone
+- quality metadata
+
+Conceptually,
+
+```
+User Tap
+
+↓
+
+Audio Capture
+
+↓
+
+Signal Processing
+
+↓
+
+Feature Extraction
+
+↓
+
+Calibration Sample
+```
+
+A sample is considered complete only after successful feature extraction.
+
+---
+
+# 5.4 Sampling Requirements
+
+Each interaction zone shall collect multiple independent samples.
+
+The number of required samples shall satisfy two competing objectives:
+
+- statistical robustness
+- acceptable calibration duration
+
+The exact minimum sample count is implementation-defined and may evolve between algorithm versions.
+
+However, every interaction zone shall collect **at least the minimum number required to compute stable statistical parameters**.
+
+The Calibration Engine shall not generate statistical models using incomplete datasets.
+
+---
+
+# 5.5 Sample Independence
+
+Each collected sample shall represent an independent tap event.
+
+Accordingly,
+
+- consecutive samples shall originate from separate user taps
+- duplicate audio captures are prohibited
+- synthetic samples are prohibited
+- interpolated samples are prohibited
+
+Every accepted sample must correspond to one physical interaction.
+
+---
+
+# 5.6 Collection Sequence
+
+Sample acquisition follows the sequence below.
+
+```
+Select Interaction Zone
+
+↓
+
+Prompt User
+
+↓
+
+User Performs Tap
+
+↓
+
+Capture Audio
+
+↓
+
+Process Signal
+
+↓
+
+Extract Features
+
+↓
+
+Validate Sample
+
+├── Rejected
+
+│      ↓
+
+│   Retry Sample
+
+│
+
+└── Accepted
+
+       ↓
+
+Store Sample
+
+↓
+
+Repeat Until Zone Complete
+```
+
+This sequence shall repeat independently for every interaction zone.
+
+---
+
+# 5.7 Collection Ordering
+
+Samples shall be stored in chronological order.
+
+For each interaction zone:
+
+```
+Sample 1
+
+↓
+
+Sample 2
+
+↓
+
+Sample 3
+
+↓
+
+...
+
+↓
+
+Sample N
+```
+
+The ordering of stored samples shall remain unchanged throughout the calibration session.
+
+Chronological ordering supports diagnostics and reproducibility.
+
+---
+
+# 5.8 User Guidance
+
+During sample collection, the Calibration Engine shall guide the user through the process.
+
+The system should communicate:
+
+- current interaction zone
+- remaining samples
+- accepted samples
+- rejected samples
+- completion progress
+
+User guidance is implementation-specific and outside the scope of this specification.
+
+---
+
+# 5.9 Accepted Samples
+
+Only validated samples shall contribute to the statistical model.
+
+Accepted samples shall satisfy:
+
+- successful audio capture
+- valid Feature Vector
+- acceptable signal quality
+- acceptable background noise
+- complete tap event
+
+Accepted samples become immutable once stored.
+
+---
+
+# 5.10 Rejected Samples
+
+Samples failing validation shall be discarded immediately.
+
+Rejected samples shall never influence:
+
+- mean vector computation
+- covariance estimation
+- threshold generation
+- calibration profile generation
+
+The system may provide feedback explaining why a sample was rejected.
+
+---
+
+# 5.11 Dataset Construction
+
+For each interaction zone, accepted samples form the calibration dataset.
+
+```
+Interaction Zone
+
+↓
+
+Accepted Samples
+
+↓
+
+Calibration Dataset
+
+↓
+
+Statistical Analysis
+```
+
+Datasets belonging to different interaction zones shall remain completely independent.
+
+---
+
+# 5.12 Dataset Completeness
+
+A dataset is considered complete only when:
+
+- required sample count reached
+- every sample validated
+- no critical collection errors occurred
+
+Incomplete datasets shall not be processed by the Statistical Generation Engine.
+
+---
+
+# 5.13 Collection Constraints
+
+The Calibration Engine shall enforce the following constraints during sample acquisition.
+
+- One tap produces one sample.
+- One sample belongs to one interaction zone.
+- Samples cannot be modified after acceptance.
+- Samples cannot be transferred between zones.
+- Invalid samples shall not be stored.
+- Collection order shall remain deterministic.
+
+Violation of any constraint invalidates the affected sample.
+
+---
+
+# 5.14 Relationship to Subsequent Processing
+
+Sample Collection produces the input consumed by the remainder of the calibration pipeline.
+
+```
+Sample Collection
+
+↓
+
+Sample Validation
+
+↓
+
+Statistical Generation
+
+↓
+
+Calibration Profile
+```
+
+No downstream subsystem shall bypass Sample Collection.
+
+---
+
+# 5.15 Summary
+
+Sample Collection establishes the empirical foundation of the Calibration System by acquiring representative acoustic tap events from each Interaction Zone. Through deterministic acquisition procedures, independent sample generation, and strict acceptance criteria, the subsystem ensures that subsequent statistical analysis operates on high-quality, reproducible datasets. The integrity of the Calibration Profile is therefore directly dependent upon the correctness and consistency of the Sample Collection process.
+
+The following section defines **Sample Validation**, specifying the quality assessment procedures, validation criteria, rejection mechanisms, and engineering rules that determine whether a collected sample is suitable for inclusion in the calibration dataset.
+
+# 6. Sample Validation
+
+## 6.1 Overview
+
+Sample Validation is responsible for determining whether a collected calibration sample accurately represents a valid user tap and is suitable for inclusion in the statistical calibration dataset.
+
+Not every detected acoustic event should contribute to the calibration model. Environmental noise, accidental contact, microphone artifacts, clipped recordings, incomplete taps, and inconsistent user interactions can significantly degrade statistical accuracy if incorporated into the calibration dataset.
+
+The objective of Sample Validation is therefore to reject poor-quality samples before they influence the statistical representation of an Interaction Zone.
+
+Sample Validation is a mandatory stage of the calibration pipeline and shall execute immediately after Feature Extraction.
+
+---
+
+## 6.2 Objectives
+
+The Sample Validation subsystem shall satisfy the following objectives:
+
+- Accept only representative tap events
+- Reject invalid acoustic observations
+- Prevent statistical contamination
+- Maintain deterministic decision making
+- Provide immediate feedback to the Calibration Controller
+- Preserve calibration consistency
+
+Validation decisions shall be deterministic and reproducible.
+
+---
+
+# 6.3 Position in the Calibration Pipeline
+
+Sample Validation occupies the quality assurance stage of the calibration process.
+
+```
+User Tap
+
+↓
+
+Audio Acquisition
+
+↓
+
+DSP Processing
+
+↓
+
+Feature Extraction
+
+↓
+
+Sample Validation
+
+├── Accepted
+
+│      ↓
+
+│  Calibration Dataset
+
+│
+
+└── Rejected
+
+       ↓
+
+Request New Sample
+```
+
+Only accepted samples may proceed beyond this stage.
+
+---
+
+# 6.4 Validation Philosophy
+
+The Tapper Calibration System prioritizes **quality over quantity**.
+
+A calibration profile generated from fewer high-quality samples is preferable to one generated from a larger dataset containing inconsistent or noisy observations.
+
+Accordingly:
+
+- uncertain samples shall be rejected
+- statistically inconsistent samples shall be discarded
+- poor-quality recordings shall never influence calibration
+
+The Validation Engine shall operate conservatively.
+
+---
+
+# 6.5 Validation Stages
+
+Validation consists of a sequence of independent checks.
+
+```
+Feature Vector
+
+↓
+
+Integrity Validation
+
+↓
+
+Signal Validation
+
+↓
+
+Noise Validation
+
+↓
+
+Consistency Validation
+
+↓
+
+Acceptance Decision
+```
+
+Failure of any validation stage immediately rejects the sample.
+
+---
+
+# 6.6 Integrity Validation
+
+Integrity Validation verifies that the captured sample is structurally complete.
+
+The following conditions shall be satisfied:
+
+- audio capture completed successfully
+- DSP processing completed successfully
+- Feature Vector generated successfully
+- required metadata available
+- interaction zone identified
+
+Samples failing integrity validation shall be discarded without further processing.
+
+---
+
+# 6.7 Signal Validation
+
+Signal Validation evaluates whether the captured tap contains sufficient acoustic information.
+
+Typical validation criteria include:
+
+- sufficient signal energy
+- detectable transient
+- valid duration
+- acceptable dynamic range
+- absence of clipping
+
+Signals exhibiting extremely weak responses or saturated recordings shall be rejected.
+
+---
+
+# 6.8 Noise Validation
+
+Environmental noise shall not dominate the captured signal.
+
+Noise validation evaluates:
+
+- background noise level
+- transient interference
+- microphone artifacts
+- competing acoustic events
+
+Examples of invalid conditions include:
+
+- conversation during calibration
+- keyboard typing
+- object impacts
+- excessive ambient noise
+
+Noise thresholds are implementation-defined.
+
+---
+
+# 6.9 Feature Validation
+
+Every extracted Feature Vector shall satisfy the constraints defined by the Feature Models.
+
+Validation shall verify:
+
+- finite numerical values
+- valid frequency-domain measurements
+- valid temporal measurements
+- absence of undefined values
+- dimensional consistency
+
+Feature Vectors containing invalid numerical values shall be rejected immediately.
+
+---
+
+# 6.10 Statistical Consistency
+
+Accepted samples should exhibit reasonable consistency with previously accepted samples belonging to the same Interaction Zone.
+
+The Validation Engine may compare the candidate sample against the evolving calibration dataset to identify obvious outliers.
+
+Possible indicators include:
+
+- unusually high feature deviation
+- abnormal spectral characteristics
+- inconsistent tap duration
+- anomalous amplitude distribution
+
+The exact statistical techniques used for outlier detection are specified in a later section of this document.
+
+---
+
+# 6.11 Validation Decision
+
+The Validation Engine produces one of two outcomes.
+
+```
+Feature Vector
+
+↓
+
+Validation Engine
+
+├── Accepted
+
+└── Rejected
+```
+
+Accepted samples become permanent members of the calibration dataset.
+
+Rejected samples are discarded immediately.
+
+No intermediate state exists.
+
+---
+
+# 6.12 Rejected Samples
+
+Rejected samples shall:
+
+- not enter the calibration dataset
+- not influence statistical calculations
+- not affect threshold generation
+- not modify existing calibration data
+
+The Calibration Controller shall request an additional sample to replace every rejected sample.
+
+---
+
+# 6.13 Accepted Samples
+
+Accepted samples become immutable calibration observations.
+
+For every accepted sample:
+
+- Feature Vector is stored
+- interaction zone recorded
+- timestamp preserved
+- quality metadata retained
+
+Accepted samples may subsequently be used for:
+
+- mean computation
+- covariance estimation
+- threshold generation
+- calibration diagnostics
+
+---
+
+# 6.14 Validation Constraints
+
+The Validation Engine shall satisfy the following constraints.
+
+- Every sample shall be validated exactly once.
+- Validation decisions shall be deterministic.
+- Validation shall not modify Feature Vectors.
+- Accepted samples shall become immutable.
+- Rejected samples shall never re-enter validation.
+- Validation shall remain independent of persistence.
+
+These constraints preserve the integrity of the calibration dataset.
+
+---
+
+# 6.15 Failure Handling
+
+Validation failures are considered recoverable.
+
+Examples include:
+
+| Failure | Recovery |
+|----------|----------|
+| Weak tap | Request another sample |
+| Excessive noise | Retry after environment stabilizes |
+| Invalid Feature Vector | Discard sample |
+| Clipped signal | Repeat tap |
+| Incomplete recording | Acquire new sample |
+
+Only repeated or unrecoverable failures may terminate the calibration session.
+
+---
+
+# 6.16 Relationship to Statistical Generation
+
+The output of Sample Validation forms the exclusive input to the Statistical Generation Engine.
+
+```
+Feature Extraction
+
+↓
+
+Sample Validation
+
+↓
+
+Accepted Samples
+
+↓
+
+Statistical Analysis
+
+↓
+
+Calibration Profile
+```
+
+No subsystem may bypass Sample Validation.
+
+---
+
+# 6.17 Summary
+
+Sample Validation serves as the quality assurance mechanism of the Calibration System, ensuring that only acoustically valid, statistically representative, and structurally complete tap events contribute to the calibration dataset. By enforcing deterministic validation rules and rejecting inconsistent observations before statistical analysis, the subsystem safeguards the integrity of the generated Calibration Profile and significantly improves the reliability of subsequent runtime recognition.
+
+The following section defines **Outlier Detection**, describing the statistical methods used to identify anomalous calibration samples that deviate significantly from the expected characteristics of an Interaction Zone.
+
+# 7. Outlier Detection
+
+## 7.1 Overview
+
+Outlier Detection is the process of identifying calibration samples that deviate significantly from the expected acoustic characteristics of an Interaction Zone.
+
+Although a sample may satisfy the basic validation requirements defined in the previous section, it may still be statistically inconsistent with the remainder of the calibration dataset. Such samples can arise from accidental double taps, inconsistent tapping force, changes in finger position, environmental disturbances, or transient microphone artifacts.
+
+The purpose of Outlier Detection is to identify these anomalous observations before statistical models are finalized, thereby improving the stability, robustness, and discriminative power of the resulting Calibration Profile.
+
+Outlier Detection operates exclusively during calibration and shall not be performed during runtime recognition.
+
+---
+
+## 7.2 Objectives
+
+The Outlier Detection subsystem shall satisfy the following objectives:
+
+- Identify statistically anomalous samples
+- Improve calibration consistency
+- Increase recognition accuracy
+- Preserve representative observations
+- Operate deterministically
+- Minimize false rejection
+
+The subsystem shall remove only those samples whose inclusion would materially degrade the statistical model.
+
+---
+
+# 7.3 Position in the Calibration Pipeline
+
+Outlier Detection is performed after all required samples for an Interaction Zone have been collected and validated, but before statistical parameters are finalized.
+
+```
+Sample Collection
+
+↓
+
+Sample Validation
+
+↓
+
+Accepted Dataset
+
+↓
+
+Outlier Detection
+
+↓
+
+Clean Dataset
+
+↓
+
+Statistical Model Generation
+```
+
+This ensures that only validated samples participate in the outlier analysis.
+
+---
+
+# 7.4 Design Philosophy
+
+Outlier Detection is based on the principle that valid calibration samples belonging to the same Interaction Zone should form a coherent statistical cluster within feature space.
+
+Samples that lie significantly outside this cluster are considered candidates for rejection.
+
+However, deviation alone does not necessarily imply invalidity. The objective is to identify observations that are inconsistent with the overall calibration distribution rather than merely different.
+
+The subsystem shall therefore favor conservative rejection to preserve representative variability in user tapping behavior.
+
+---
+
+# 7.5 Sources of Outliers
+
+Examples of events that may produce outlier samples include:
+
+- accidental double taps
+- extremely weak taps
+- excessively forceful taps
+- finger movement during impact
+- tapping outside the intended interaction zone
+- sudden environmental noise
+- microphone glitches
+- partial audio capture
+- device movement during calibration
+
+These events introduce observations that are not representative of normal user interaction.
+
+---
+
+# 7.6 Statistical Representation
+
+Each accepted calibration sample is represented by its corresponding Feature Vector.
+
+```
+Feature Vector₁
+
+Feature Vector₂
+
+Feature Vector₃
+
+...
+
+Feature Vectorₙ
+```
+
+Collectively, these vectors define the statistical distribution of an Interaction Zone.
+
+Outlier Detection evaluates each observation relative to the distribution formed by the remaining samples.
+
+---
+
+# 7.7 Distance-Based Evaluation
+
+Candidate samples shall be evaluated using an appropriate statistical distance metric.
+
+Possible distance measures include:
+
+- Euclidean Distance
+- Mahalanobis Distance
+- Standardized Feature Distance
+
+For Version 1, the preferred metric is the **Mahalanobis Distance**, as it accounts for covariance between feature dimensions and provides scale-independent comparisons.
+
+The mathematical formulation of the selected distance metric is specified in **04_ALGORITHM.md**.
+
+---
+
+# 7.8 Detection Procedure
+
+The Outlier Detection process proceeds as follows.
+
+```
+Accepted Dataset
+
+↓
+
+Estimate Statistical Parameters
+
+↓
+
+Compute Distance for Each Sample
+
+↓
+
+Compare Against Threshold
+
+├── Within Threshold
+│
+│      ↓
+│
+│   Retain Sample
+│
+└── Exceeds Threshold
+
+       ↓
+
+Candidate Outlier
+
+↓
+
+Reject or Review
+```
+
+Each sample shall be evaluated independently.
+
+---
+
+# 7.9 Rejection Criteria
+
+A sample may be classified as an outlier if it:
+
+- exceeds the configured statistical distance threshold
+- exhibits abnormal feature relationships
+- significantly alters zone statistics
+- is inconsistent with the majority of accepted observations
+
+Threshold values shall remain deterministic for a given algorithm version.
+
+---
+
+# 7.10 Dataset Refinement
+
+Following Outlier Detection, the calibration dataset is partitioned into two groups.
+
+```
+Validated Samples
+
+↓
+
+Outlier Detection
+
+├── Retained Samples
+
+└── Rejected Samples
+```
+
+Only retained samples contribute to:
+
+- mean vector computation
+- covariance estimation
+- threshold generation
+- calibration profile construction
+
+Rejected samples are archived only for diagnostic purposes, if diagnostics are enabled.
+
+---
+
+# 7.11 Minimum Dataset Preservation
+
+Outlier rejection shall never reduce the dataset below the minimum number of samples required for reliable statistical estimation.
+
+If excessive outlier removal results in an insufficient dataset, the Calibration Controller shall request additional user samples before calibration may continue.
+
+This guarantees that statistical models remain mathematically stable.
+
+---
+
+# 7.12 Deterministic Behavior
+
+Outlier Detection shall satisfy the following deterministic properties.
+
+Given:
+
+- identical Feature Vectors
+- identical algorithm version
+- identical threshold parameters
+
+the subsystem shall always produce:
+
+- identical retained samples
+- identical rejected samples
+- identical statistical models
+
+Randomized rejection strategies are prohibited.
+
+---
+
+# 7.13 Failure Handling
+
+Outlier Detection failures include:
+
+| Failure | Recovery |
+|----------|----------|
+| Insufficient retained samples | Collect additional samples |
+| Singular covariance matrix | Recompute after additional sampling |
+| Numerical instability | Regenerate statistical parameters |
+| Invalid feature dimensions | Reject affected samples |
+
+Only unrecoverable failures shall terminate the calibration session.
+
+---
+
+# 7.14 Engineering Constraints
+
+The Outlier Detection subsystem shall satisfy the following constraints.
+
+- Every accepted sample shall be evaluated exactly once.
+- Rejected samples shall not influence subsequent statistical calculations.
+- Detection shall remain deterministic.
+- Distance calculations shall use validated Feature Vectors only.
+- Statistical thresholds shall remain version-controlled.
+- Outlier Detection shall remain independent of runtime recognition.
+
+These constraints preserve the mathematical integrity of the calibration process.
+
+---
+
+# 7.15 Relationship to Statistical Generation
+
+Outlier Detection produces the refined calibration dataset used by the Statistical Generation Engine.
+
+```
+Validated Dataset
+
+↓
+
+Outlier Detection
+
+↓
+
+Refined Dataset
+
+↓
+
+Mean Vector
+
+↓
+
+Covariance Matrix
+
+↓
+
+Threshold Model
+
+↓
+
+Calibration Profile
+```
+
+No statistical parameters shall be generated prior to completion of Outlier Detection.
+
+---
+
+# 7.16 Summary
+
+Outlier Detection enhances the reliability of the Calibration System by identifying and removing statistically inconsistent observations before model generation. By refining the calibration dataset through deterministic, distance-based analysis, the subsystem reduces the influence of anomalous user interactions and environmental disturbances while preserving representative variability. The resulting refined dataset forms the basis for robust statistical estimation and ultimately contributes to more accurate and stable runtime recognition.
+
+The following section defines **Feature Extraction During Calibration**, describing how validated audio samples are transformed into canonical Feature Vectors that serve as the statistical representation of each Interaction Zone.
+
+# 8. Feature Extraction During Calibration
+
+## 8.1 Overview
+
+Feature Extraction is the process of transforming a validated acoustic tap into a numerical representation suitable for statistical analysis.
+
+While the DSP Pipeline converts raw microphone recordings into frequency-domain information, Feature Extraction converts this processed signal into a compact Feature Vector that captures the acoustic characteristics of the tap.
+
+The Feature Vector serves as the canonical representation of every calibration sample and forms the basis for all subsequent statistical modeling.
+
+No raw audio is used directly during statistical profile generation.
+
+---
+
+## 8.2 Objectives
+
+The Feature Extraction subsystem shall satisfy the following objectives.
+
+- Produce deterministic Feature Vectors
+- Preserve discriminative acoustic information
+- Minimize feature redundancy
+- Support efficient statistical computation
+- Remain independent of recognition algorithms
+- Maintain implementation consistency
+
+The generated Feature Vector shall uniquely characterize the acoustic properties of the captured tap.
+
+---
+
+# 8.3 Position in the Calibration Pipeline
+
+Feature Extraction occupies the transition between signal processing and statistical analysis.
+
+```
+Raw Audio
+
+↓
+
+DSP Processing
+
+↓
+
+Frequency Spectrum
+
+↓
+
+Feature Extraction
+
+↓
+
+Feature Vector
+
+↓
+
+Sample Validation
+
+↓
+
+Statistical Analysis
+```
+
+Feature Extraction shall execute only after successful completion of the DSP pipeline.
+
+---
+
+# 8.4 Input Requirements
+
+The subsystem consumes the processed outputs generated by the DSP Engine.
+
+Typical inputs include:
+
+- filtered audio signal
+- FFT output
+- frequency spectrum
+- signal envelope
+- temporal characteristics
+
+Input data shall satisfy all requirements defined in **03_DSP.md**.
+
+---
+
+# 8.5 Feature Vector
+
+Each calibration sample produces exactly one Feature Vector.
+
+Conceptually,
+
+```
+Calibration Sample
+
+↓
+
+Feature Extraction
+
+↓
+
+Feature Vector
+```
+
+The Feature Vector is immutable once generated.
+
+It becomes the canonical representation of the calibration sample throughout the remainder of the calibration process.
+
+---
+
+# 8.6 Feature Categories
+
+The extracted Feature Vector consists of multiple categories of acoustic information.
+
+### Amplitude Features
+
+Describe signal magnitude.
+
+Examples include:
+
+- peak amplitude
+- RMS energy
+- signal energy
+- dynamic range
+
+These features characterize tapping force.
+
+---
+
+### Temporal Features
+
+Describe how the tap evolves over time.
+
+Examples include:
+
+- attack duration
+- decay duration
+- signal duration
+- temporal centroid
+
+These features capture differences in tap dynamics.
+
+---
+
+### Spectral Features
+
+Describe the frequency-domain characteristics of the tap.
+
+Examples include:
+
+- dominant frequency
+- spectral centroid
+- bandwidth
+- harmonic energy distribution
+- spectral roll-off
+
+These features provide the strongest discrimination between interaction zones.
+
+---
+
+### Derived Features
+
+Additional features may be computed from combinations of the primary measurements.
+
+Examples include:
+
+- energy ratios
+- normalized amplitudes
+- frequency relationships
+- statistical descriptors
+
+Derived features improve separability while reducing redundancy.
+
+---
+
+# 8.7 Feature Normalization
+
+Raw feature values may vary significantly due to user tapping force and environmental conditions.
+
+Accordingly, features may undergo normalization prior to statistical analysis.
+
+Normalization objectives include:
+
+- comparable feature scales
+- improved numerical stability
+- reduced sensitivity to tap intensity
+- consistent covariance estimation
+
+The normalization procedure shall remain deterministic.
+
+---
+
+# 8.8 Feature Consistency
+
+Repeated taps within the same Interaction Zone should produce Feature Vectors exhibiting low intra-zone variance.
+
+Conversely, Feature Vectors from different Interaction Zones should exhibit sufficiently large inter-zone separation.
+
+This relationship is illustrated conceptually.
+
+```
+Interaction Zone A
+
+● ● ● ● ●
+
+Small Variance
+
+
+Interaction Zone B
+
+▲ ▲ ▲ ▲ ▲
+
+Small Variance
+
+
+Large Separation Between Clusters
+```
+
+High intra-zone consistency is essential for reliable statistical modeling.
+
+---
+
+# 8.9 Feature Independence
+
+Individual features should contribute unique information regarding the acoustic characteristics of a tap.
+
+Highly redundant features increase computational complexity without improving recognition performance.
+
+Accordingly, feature selection should favor:
+
+- high discriminative power
+- low redundancy
+- numerical stability
+- reproducibility
+
+Feature engineering decisions shall be documented for each algorithm version.
+
+---
+
+# 8.10 Deterministic Generation
+
+Given identical DSP outputs, Feature Extraction shall always generate identical Feature Vectors.
+
+The subsystem shall not employ:
+
+- randomized feature selection
+- adaptive weighting
+- machine learning inference
+- probabilistic estimation
+
+Deterministic generation is a fundamental design requirement.
+
+---
+
+# 8.11 Numerical Constraints
+
+Every generated Feature Vector shall satisfy the following constraints.
+
+- finite numerical values
+- consistent dimensionality
+- absence of undefined values
+- normalized representation (where applicable)
+- valid physical interpretation
+
+Feature Vectors violating any constraint shall be rejected during Sample Validation.
+
+---
+
+# 8.12 Relationship to Statistical Analysis
+
+Feature Vectors form the exclusive input to the Statistical Generation Engine.
+
+```
+Feature Vectors
+
+↓
+
+Mean Vector
+
+↓
+
+Covariance Matrix
+
+↓
+
+Threshold Model
+
+↓
+
+Calibration Profile
+```
+
+No statistical parameters shall be computed directly from raw audio.
+
+---
+
+# 8.13 Engineering Constraints
+
+The Feature Extraction subsystem shall satisfy the following constraints.
+
+- One calibration sample produces one Feature Vector.
+- Feature Vectors shall remain immutable after generation.
+- Feature extraction shall be deterministic.
+- Generated vectors shall conform to the Feature Models defined in **05_DATA_MODELS.md**.
+- Feature extraction shall remain independent of runtime recognition.
+- Raw audio shall not be modified during feature computation.
+
+These constraints ensure reproducibility and compatibility across algorithm versions.
+
+---
+
+# 8.14 Summary
+
+Feature Extraction transforms validated acoustic tap recordings into compact, deterministic Feature Vectors that serve as the statistical representation of each calibration sample. By encoding amplitude, temporal, spectral, and derived acoustic characteristics into a standardized numerical form, the subsystem enables efficient statistical modeling while preserving the information necessary for accurate runtime recognition. The resulting Feature Vectors constitute the sole input to the Statistical Generation Engine.
+
+The following section defines **Statistical Model Generation**, describing the computation of mean vectors, covariance matrices, distance models, and recognition thresholds that collectively form the Calibration Profile.
+
+# 9. Statistical Model Generation
+
+## 9.1 Overview
+
+Statistical Model Generation is the process of transforming the refined calibration dataset into a mathematical representation of each Interaction Zone.
+
+Following Feature Extraction, Sample Validation, and Outlier Detection, the Calibration Engine possesses a collection of representative Feature Vectors for every Interaction Zone. The objective of this stage is to summarize these observations using statistical models that accurately describe both the central tendency and variability of user taps.
+
+These statistical models become the reference against which all future runtime tap events are compared.
+
+The quality of the Recognition Engine is therefore fundamentally dependent upon the correctness and stability of the statistical models generated during calibration.
+
+---
+
+## 9.2 Objectives
+
+The Statistical Model Generation subsystem shall satisfy the following objectives.
+
+- Generate representative statistical models
+- Capture intra-zone variability
+- Preserve feature relationships
+- Support deterministic recognition
+- Maximize numerical stability
+- Produce reproducible calibration profiles
+
+The generated models shall accurately characterize the acoustic behavior of every Interaction Zone.
+
+---
+
+# 9.3 Position in the Calibration Pipeline
+
+Statistical Model Generation follows the completion of dataset refinement.
+
+```
+Feature Extraction
+
+↓
+
+Sample Validation
+
+↓
+
+Outlier Detection
+
+↓
+
+Refined Dataset
+
+↓
+
+Statistical Model Generation
+
+↓
+
+Calibration Profile
+```
+
+Only refined datasets shall be used for statistical estimation.
+
+---
+
+# 9.4 Inputs
+
+The subsystem consumes the refined calibration dataset generated for each Interaction Zone.
+
+Each dataset consists of:
+
+- validated Feature Vectors
+- interaction zone identifier
+- sample metadata
+- quality metrics
+
+The subsystem shall not consume:
+
+- raw audio
+- FFT outputs
+- temporary DSP data
+
+Feature Vectors constitute the exclusive statistical input.
+
+---
+
+# 9.5 Statistical Representation
+
+Each Interaction Zone is represented by an independent multivariate statistical model.
+
+Conceptually,
+
+```
+Interaction Zone
+
+↓
+
+Feature Vectors
+
+↓
+
+Statistical Model
+
+↓
+
+Zone Profile
+```
+
+Every Interaction Zone produces exactly one statistical model.
+
+No statistical information is shared between zones.
+
+---
+
+# 9.6 Mean Vector Estimation
+
+The first statistical parameter generated is the Mean Vector.
+
+The Mean Vector represents the expected Feature Vector for an Interaction Zone and serves as the centroid of the calibration dataset.
+
+Conceptually,
+
+```
+Feature Vectors
+
+↓
+
+Mean Estimation
+
+↓
+
+Mean Vector (μ)
+```
+
+The mathematical formulation of the Mean Vector is specified in **04_ALGORITHM.md**.
+
+The Mean Vector shall be computed using all retained calibration samples.
+
+---
+
+# 9.7 Covariance Matrix Estimation
+
+Following Mean Vector estimation, the subsystem computes the Covariance Matrix.
+
+The Covariance Matrix describes:
+
+- feature variability
+- feature correlation
+- distribution shape
+- statistical spread
+
+Conceptually,
+
+```
+Feature Vectors
+
+↓
+
+Covariance Estimation
+
+↓
+
+Covariance Matrix (Σ)
+```
+
+Covariance estimation shall use the complete refined dataset.
+
+---
+
+# 9.8 Covariance Validation
+
+The generated Covariance Matrix shall satisfy the following mathematical properties.
+
+- square matrix
+- symmetric
+- positive semi-definite
+- finite numerical values
+- correct dimensionality
+
+Invalid covariance matrices shall prevent profile generation.
+
+If numerical instability is detected, the Calibration Controller shall request additional calibration samples.
+
+---
+
+# 9.9 Derived Statistical Parameters
+
+Additional statistical parameters may be computed from the Mean Vector and Covariance Matrix.
+
+Examples include:
+
+- inverse covariance matrix
+- standard deviation vector
+- confidence intervals
+- variance estimates
+- feature correlation matrix
+
+These parameters support efficient runtime recognition while avoiding repeated computation.
+
+---
+
+# 9.10 Zone Profile Construction
+
+The statistical parameters generated for an Interaction Zone are combined into a Zone Profile.
+
+Conceptually,
+
+```
+Mean Vector
+
++
+
+Covariance Matrix
+
++
+
+Derived Parameters
+
+↓
+
+Zone Profile
+```
+
+Each Zone Profile shall be complete and self-contained.
+
+The Zone Profile shall contain all statistical information required for runtime recognition.
+
+---
+
+# 9.11 Statistical Independence
+
+Every Interaction Zone shall be modeled independently.
+
+```
+Top Left
+
+↓
+
+Zone Profile A
+
+
+Top Right
+
+↓
+
+Zone Profile B
+
+
+Bottom Left
+
+↓
+
+Zone Profile C
+
+
+Bottom Right
+
+↓
+
+Zone Profile D
+```
+
+The statistical characteristics of one Interaction Zone shall not influence the statistical model of another.
+
+This independence enables unbiased comparison during runtime recognition.
+
+---
+
+# 9.12 Numerical Stability
+
+The subsystem shall ensure numerical stability throughout statistical computation.
+
+Measures may include:
+
+- normalization of feature values
+- regularization of covariance matrices
+- finite precision validation
+- condition number monitoring
+
+These techniques improve robustness while preserving deterministic behavior.
+
+Implementation details are algorithm-version specific.
+
+---
+
+# 9.13 Deterministic Generation
+
+Given:
+
+- identical Feature Vectors
+- identical algorithm version
+- identical processing order
+
+the subsystem shall always generate:
+
+- identical Mean Vectors
+- identical Covariance Matrices
+- identical Zone Profiles
+
+Statistical estimation shall contain no stochastic components.
+
+---
+
+# 9.14 Failure Handling
+
+Possible failures include:
+
+| Failure | Recovery |
+|----------|----------|
+| Insufficient samples | Request additional samples |
+| Singular covariance matrix | Collect more representative data |
+| Numerical instability | Recompute after normalization |
+| Invalid statistical parameters | Reject profile generation |
+| Dimension mismatch | Abort statistical computation |
+
+Only valid statistical models may proceed to profile construction.
+
+---
+
+# 9.15 Engineering Constraints
+
+The Statistical Model Generation subsystem shall satisfy the following constraints.
+
+- Every Interaction Zone shall produce one statistical model.
+- Statistical estimation shall remain deterministic.
+- Zone Profiles shall remain independent.
+- Only validated Feature Vectors may be used.
+- Generated parameters shall remain immutable after publication.
+- Statistical computation shall remain independent of persistence and runtime recognition.
+
+These constraints ensure mathematical correctness and long-term reproducibility.
+
+---
+
+# 9.16 Relationship to Runtime Recognition
+
+The generated statistical models form the mathematical foundation of runtime recognition.
+
+```
+Calibration Samples
+
+↓
+
+Statistical Model Generation
+
+↓
+
+Zone Profiles
+
+↓
+
+Calibration Profile
+
+↓
+
+Recognition Engine
+
+↓
+
+Runtime Classification
+```
+
+During runtime, the Recognition Engine compares unknown Feature Vectors against these Zone Profiles to determine the most probable Interaction Zone.
+
+The statistical models generated during calibration are therefore the authoritative reference for all subsequent recognition decisions.
+
+---
+
+# 9.17 Summary
+
+Statistical Model Generation transforms refined calibration datasets into robust mathematical representations of each Interaction Zone through the computation of Mean Vectors, Covariance Matrices, and derived statistical parameters. These Zone Profiles capture both the expected acoustic characteristics and natural variability of user taps, providing the deterministic statistical foundation upon which runtime recognition is built. By enforcing numerical stability, statistical independence, and reproducible estimation procedures, this subsystem ensures that every Calibration Profile accurately reflects the acoustic behavior of the calibrated device.
+
+The following section defines **Threshold Generation**, specifying how decision boundaries are derived from the generated statistical models to enable reliable acceptance and rejection of runtime tap events.
+
+# 10. Threshold Generation
+
+## 10.1 Overview
+
+Threshold Generation is the process of deriving the decision boundaries used by the Recognition Engine to determine whether a runtime tap sufficiently matches the statistical model of an Interaction Zone.
+
+While Statistical Model Generation describes the expected distribution of calibration samples, Threshold Generation defines the limits within which future observations are considered valid. These thresholds transform descriptive statistical models into operational decision models that enable deterministic classification.
+
+The generated thresholds become an integral part of the Calibration Profile and are consumed directly by the Recognition Engine during runtime.
+
+---
+
+## 10.2 Objectives
+
+The Threshold Generation subsystem shall satisfy the following objectives.
+
+- Derive deterministic decision boundaries
+- Maximize recognition accuracy
+- Minimize false acceptances
+- Minimize false rejections
+- Preserve statistical consistency
+- Support future algorithm evolution
+
+Thresholds shall be generated exclusively from validated statistical models.
+
+---
+
+# 10.3 Position in the Calibration Pipeline
+
+Threshold Generation follows the successful computation of statistical parameters.
+
+```
+Feature Vectors
+
+↓
+
+Statistical Model Generation
+
+↓
+
+Mean Vector
+
++
+
+Covariance Matrix
+
+↓
+
+Threshold Generation
+
+↓
+
+Zone Profile
+
+↓
+
+Calibration Profile
+```
+
+Threshold computation shall not begin until statistical estimation has completed successfully.
+
+---
+
+# 10.4 Threshold Philosophy
+
+Recognition is fundamentally a decision problem.
+
+For every runtime Feature Vector, the Recognition Engine must determine whether the observation is sufficiently similar to a calibrated Interaction Zone.
+
+Thresholds define this notion of **acceptable similarity**.
+
+Conceptually,
+
+```
+Runtime Feature Vector
+
+↓
+
+Similarity Measurement
+
+↓
+
+Threshold Comparison
+
+├── Within Threshold
+
+│      ↓
+
+│   Accept
+
+│
+
+└── Outside Threshold
+
+       ↓
+
+Reject
+```
+
+Thresholds therefore define the boundary between valid and invalid observations.
+
+---
+
+# 10.5 Decision Space
+
+Each Interaction Zone occupies a region within the multidimensional feature space.
+
+```
+               Accepted Region
+
+          **********************
+      ****                    ****
+    ***                          ***
+   **            Mean              **
+   **             (μ)              **
+    ***                          ***
+      ****                    ****
+          **********************
+
+Outside Region → Rejected
+```
+
+The exact shape of the accepted region depends on the statistical model employed by the Recognition Engine.
+
+For Version 1, the accepted region is defined using statistical distance rather than fixed per-feature limits.
+
+---
+
+# 10.6 Distance Threshold
+
+The primary threshold generated during calibration is the **distance threshold**.
+
+This value represents the maximum permissible statistical distance between a runtime Feature Vector and the calibrated statistical model.
+
+Conceptually,
+
+```
+Distance(Runtime Sample, Zone Model)
+
+↓
+
+Compare Against Threshold T
+
+Distance ≤ T
+
+↓
+
+Accept
+
+Distance > T
+
+↓
+
+Reject
+```
+
+The computation of statistical distance is specified in **04_ALGORITHM.md**.
+
+---
+
+# 10.7 Threshold Derivation
+
+Thresholds shall be derived solely from the refined calibration dataset.
+
+The derivation process may consider:
+
+- observed feature variance
+- covariance structure
+- distribution spread
+- desired confidence level
+- algorithm version
+
+No manually entered user parameters shall influence threshold generation.
+
+The resulting threshold shall be reproducible for identical calibration datasets.
+
+---
+
+# 10.8 Confidence Region
+
+Thresholds implicitly define a confidence region surrounding the Mean Vector.
+
+```
+Calibration Samples
+
+● ● ● ● ●
+
+     μ
+
+● ● ● ● ●
+
+↓
+
+Confidence Region
+
+↓
+
+Recognition Boundary
+```
+
+Runtime observations falling within this region are considered statistically consistent with the calibrated Interaction Zone.
+
+Observations outside the region are rejected.
+
+---
+
+# 10.9 Per-Zone Thresholds
+
+Each Interaction Zone shall generate an independent threshold.
+
+```
+Top Left
+
+↓
+
+Threshold A
+
+
+Top Right
+
+↓
+
+Threshold B
+
+
+Bottom Left
+
+↓
+
+Threshold C
+
+
+Bottom Right
+
+↓
+
+Threshold D
+```
+
+Thresholds are not shared between Interaction Zones.
+
+Each threshold reflects the natural variability observed during calibration of that specific zone.
+
+---
+
+# 10.10 Threshold Validation
+
+Generated thresholds shall satisfy the following properties.
+
+- finite numerical value
+- positive magnitude
+- reproducible
+- mathematically consistent
+- compatible with the statistical model
+
+Thresholds violating these requirements shall invalidate profile generation.
+
+---
+
+# 10.11 Threshold Storage
+
+Every generated threshold shall be stored within the corresponding Zone Profile.
+
+Conceptually,
+
+```
+Zone Profile
+
+├── Mean Vector
+
+├── Covariance Matrix
+
+├── Threshold
+
+└── Metadata
+```
+
+The Calibration Profile therefore contains all information required for runtime decision making.
+
+---
+
+# 10.12 Deterministic Generation
+
+Given:
+
+- identical calibration samples
+- identical statistical models
+- identical algorithm version
+
+the Threshold Generation subsystem shall always produce identical threshold values.
+
+Randomized optimization, adaptive tuning, and heuristic adjustment are prohibited during calibration.
+
+---
+
+# 10.13 Failure Handling
+
+Possible failures include:
+
+| Failure | Recovery |
+|----------|----------|
+| Invalid statistical model | Regenerate statistics |
+| Undefined threshold | Abort profile generation |
+| Numerical instability | Recompute threshold |
+| Invalid covariance matrix | Request additional calibration |
+| Threshold validation failure | Reject calibration profile |
+
+Threshold computation failures shall prevent activation of the Calibration Profile.
+
+---
+
+# 10.14 Engineering Constraints
+
+The Threshold Generation subsystem shall satisfy the following constraints.
+
+- Every Interaction Zone shall produce exactly one threshold.
+- Thresholds shall be derived only from validated statistical models.
+- Threshold computation shall remain deterministic.
+- Generated thresholds shall remain immutable after publication.
+- Thresholds shall remain independent between interaction zones.
+- Runtime recognition shall never modify stored threshold values.
+
+These constraints ensure stable and reproducible recognition behavior across calibration sessions.
+
+---
+
+# 10.15 Relationship to Runtime Recognition
+
+Thresholds provide the final decision criteria used during runtime classification.
+
+```
+Calibration
+
+↓
+
+Statistical Model
+
+↓
+
+Threshold Generation
+
+↓
+
+Calibration Profile
+
+↓
+
+Recognition Engine
+
+↓
+
+Distance Computation
+
+↓
+
+Threshold Comparison
+
+↓
+
+Recognition Decision
+```
+
+Without valid thresholds, the Recognition Engine cannot determine whether a runtime observation sufficiently matches a calibrated Interaction Zone.
+
+---
+
+# 10.16 Summary
+
+Threshold Generation converts descriptive statistical models into operational decision boundaries by deriving deterministic acceptance thresholds for each Interaction Zone. These thresholds define the permissible range of variation around the calibrated statistical model and enable the Recognition Engine to distinguish valid tap events from unrelated acoustic observations. By ensuring that thresholds are generated exclusively from validated statistical data and remain immutable thereafter, the subsystem establishes the final mathematical component required for reliable runtime recognition.
+
+The following section defines **Calibration Quality Assessment**, describing how the completed calibration profile is evaluated for completeness, stability, statistical reliability, and readiness for deployment.
+
+# 11. Calibration Quality Assessment
+
+## 11.1 Overview
+
+Calibration Quality Assessment is the final verification stage of the calibration process. Its purpose is to evaluate whether the generated Calibration Profile accurately, consistently, and reliably represents the acoustic characteristics of every Interaction Zone before the profile is activated for runtime recognition.
+
+While previous stages ensure that individual samples and statistical models are valid, Quality Assessment evaluates the calibration session as a whole. It verifies that the generated profile satisfies the engineering requirements necessary for dependable runtime performance.
+
+Only Calibration Profiles that successfully pass Quality Assessment shall be considered valid for deployment.
+
+---
+
+## 11.2 Objectives
+
+The Calibration Quality Assessment subsystem shall satisfy the following objectives.
+
+- Verify profile completeness
+- Evaluate statistical stability
+- Detect insufficient calibration quality
+- Ensure mathematical consistency
+- Prevent deployment of unreliable profiles
+- Maintain deterministic evaluation
+
+The subsystem shall operate solely on the completed Calibration Profile and associated statistical models.
+
+---
+
+# 11.3 Position in the Calibration Pipeline
+
+Quality Assessment is performed immediately after Threshold Generation.
+
+```
+Sample Collection
+
+↓
+
+Feature Extraction
+
+↓
+
+Statistical Model Generation
+
+↓
+
+Threshold Generation
+
+↓
+
+Calibration Quality Assessment
+
+├── Passed
+│
+│      ↓
+│
+│  Persist Profile
+│
+└── Failed
+
+       ↓
+
+Request Recalibration
+```
+
+No profile shall be persisted until Quality Assessment has completed successfully.
+
+---
+
+# 11.4 Assessment Philosophy
+
+The purpose of Quality Assessment is not to improve the Calibration Profile, but to determine whether it is suitable for runtime use.
+
+Accordingly, the subsystem performs **evaluation rather than modification**.
+
+If deficiencies are identified, the appropriate corrective action is to collect additional calibration data or restart calibration rather than altering the generated statistical model.
+
+---
+
+# 11.5 Assessment Criteria
+
+The completed Calibration Profile shall be evaluated against the following criteria.
+
+### Dataset Completeness
+
+Verification that every Interaction Zone contains the required number of accepted samples.
+
+Checks include:
+
+- minimum sample count achieved
+- no missing interaction zones
+- complete calibration session
+
+---
+
+### Statistical Stability
+
+Verification that generated statistical parameters exhibit acceptable numerical properties.
+
+Checks include:
+
+- stable Mean Vectors
+- valid Covariance Matrices
+- finite numerical values
+- acceptable feature variance
+
+---
+
+### Threshold Validity
+
+Verification that every generated threshold is mathematically valid.
+
+Checks include:
+
+- positive threshold values
+- finite numerical values
+- consistency with statistical model
+- successful threshold computation
+
+---
+
+### Structural Integrity
+
+Verification that the Calibration Profile is internally complete.
+
+Checks include:
+
+- metadata present
+- version identifier present
+- profile identifiers valid
+- serialization readiness
+
+---
+
+# 11.6 Assessment Workflow
+
+Quality Assessment follows the sequence below.
+
+```
+Calibration Profile
+
+↓
+
+Completeness Checks
+
+↓
+
+Statistical Checks
+
+↓
+
+Threshold Checks
+
+↓
+
+Integrity Checks
+
+↓
+
+Final Assessment
+
+├── Pass
+
+└── Fail
+```
+
+Failure of any assessment stage shall terminate the evaluation immediately.
+
+---
+
+# 11.7 Quality Outcomes
+
+Quality Assessment produces one of two possible outcomes.
+
+```
+Calibration Profile
+
+↓
+
+Quality Assessment
+
+├── Passed
+
+└── Failed
+```
+
+### Passed
+
+The profile satisfies all engineering requirements.
+
+The profile becomes eligible for persistence and runtime activation.
+
+---
+
+### Failed
+
+The profile does not satisfy one or more mandatory requirements.
+
+The profile shall be discarded and shall not be activated.
+
+---
+
+# 11.8 Failure Categories
+
+Examples of Quality Assessment failures include:
+
+| Category | Example |
+|----------|---------|
+| Incomplete Dataset | Missing required samples |
+| Statistical Failure | Invalid covariance matrix |
+| Threshold Failure | Undefined recognition threshold |
+| Structural Failure | Missing profile metadata |
+| Numerical Failure | NaN or infinite values |
+| Consistency Failure | Inconsistent feature dimensions |
+
+Each failure shall be reported using the standardized Error Model.
+
+---
+
+# 11.9 Quality Metrics
+
+The Calibration Engine may compute diagnostic quality metrics to assist developers and users.
+
+Examples include:
+
+- average sample quality
+- feature variance
+- signal-to-noise ratio
+- calibration consistency
+- outlier percentage
+- statistical confidence
+
+These metrics are informative only.
+
+They shall not replace mandatory validation requirements.
+
+---
+
+# 11.10 Deterministic Evaluation
+
+Given:
+
+- identical calibration samples
+- identical statistical models
+- identical algorithm version
+
+Quality Assessment shall always produce the same evaluation result.
+
+The subsystem shall contain no adaptive scoring, machine learning models, or heuristic decision making.
+
+---
+
+# 11.11 Engineering Constraints
+
+The Calibration Quality Assessment subsystem shall satisfy the following constraints.
+
+- Every Calibration Profile shall be evaluated exactly once.
+- Assessment shall occur before persistence.
+- Failed profiles shall never be activated.
+- Evaluation shall not modify statistical parameters.
+- Assessment results shall be deterministic.
+- Quality metrics shall not alter pass/fail decisions.
+
+These constraints preserve the integrity of the calibration process.
+
+---
+
+# 11.12 Relationship to Profile Persistence
+
+Only profiles that successfully pass Quality Assessment may proceed to persistence.
+
+```
+Calibration Profile
+
+↓
+
+Quality Assessment
+
+↓
+
+Passed Profile
+
+↓
+
+Persistence
+
+↓
+
+Runtime Recognition
+```
+
+Failed profiles terminate the calibration session and require recalibration.
+
+---
+
+# 11.13 Summary
+
+Calibration Quality Assessment serves as the final verification stage of the Calibration System, ensuring that the completed Calibration Profile is mathematically valid, statistically stable, structurally complete, and suitable for runtime deployment. By evaluating the profile as a whole without modifying its contents, the subsystem prevents unreliable calibration data from entering production use and provides a deterministic quality gate between model generation and persistence.
+
+The following section defines **Calibration Profile Persistence**, specifying how validated calibration profiles are serialized, stored, versioned, and retrieved for runtime recognition.
+
+# 12. Calibration Profile Persistence
+
+## 12.1 Overview
+
+Calibration Profile Persistence is responsible for the long-term storage, retrieval, and lifecycle management of validated Calibration Profiles.
+
+Following successful completion of Calibration Quality Assessment, the generated Calibration Profile shall be serialized and persisted such that it can be restored during subsequent application launches without requiring recalibration.
+
+Persistence forms the boundary between the calibration subsystem and the runtime recognition subsystem.
+
+A persisted Calibration Profile represents the authoritative statistical reference for a specific device and algorithm version.
+
+---
+
+## 12.2 Objectives
+
+The Persistence subsystem shall satisfy the following objectives.
+
+- Persist validated Calibration Profiles
+- Ensure lossless serialization
+- Preserve profile integrity
+- Support version compatibility
+- Prevent unauthorized modification
+- Enable deterministic restoration
+
+Persistence shall not alter the contents of a Calibration Profile.
+
+---
+
+# 12.3 Position in the Calibration Pipeline
+
+Persistence is the final stage of calibration.
+
+```
+Sample Collection
+
+↓
+
+Validation
+
+↓
+
+Statistical Model Generation
+
+↓
+
+Threshold Generation
+
+↓
+
+Quality Assessment
+
+↓
+
+Calibration Profile Persistence
+
+↓
+
+Runtime Recognition
+```
+
+Only validated Calibration Profiles may be persisted.
+
+---
+
+# 12.4 Persistence Architecture
+
+The persistence subsystem consists of four logical stages.
+
+```
+Calibration Profile
+
+↓
+
+Validation
+
+↓
+
+Serialization
+
+↓
+
+Persistent Storage
+
+↓
+
+Verification
+```
+
+Each stage performs one well-defined responsibility.
+
+---
+
+# 12.5 Profile Contents
+
+The persisted Calibration Profile shall contain all information required for runtime recognition.
+
+Typical contents include:
+
+- profile identifier
+- algorithm version
+- creation timestamp
+- interaction zone definitions
+- Mean Vectors
+- Covariance Matrices
+- derived statistical parameters
+- recognition thresholds
+- calibration metadata
+
+Raw calibration audio shall not be stored as part of the profile.
+
+---
+
+# 12.6 Serialization
+
+Prior to persistence, the Calibration Profile shall be converted into a deterministic serialized representation.
+
+Serialization shall satisfy the following requirements.
+
+- lossless representation
+- deterministic encoding
+- version identification
+- platform independence
+- numerical precision preservation
+
+The serialization format is defined separately in the Persistence Specification.
+
+---
+
+# 12.7 Storage Requirements
+
+The persistence mechanism shall guarantee that stored profiles remain reliable across application sessions.
+
+Accordingly, storage shall provide:
+
+- durability
+- atomic writes
+- integrity verification
+- crash recovery
+- consistent read operations
+
+Implementation details are platform-specific.
+
+---
+
+# 12.8 Profile Versioning
+
+Every persisted Calibration Profile shall include explicit version information.
+
+Version metadata shall include:
+
+- profile format version
+- recognition algorithm version
+- feature schema version
+- calibration specification version
+
+Version information enables compatibility validation during profile loading.
+
+Profiles created using incompatible versions shall not be activated.
+
+---
+
+# 12.9 Profile Loading
+
+When the application initializes, the Persistence subsystem shall attempt to restore the most recent compatible Calibration Profile.
+
+The loading sequence is illustrated below.
+
+```
+Application Startup
+
+↓
+
+Locate Stored Profile
+
+↓
+
+Deserialize
+
+↓
+
+Validate Version
+
+↓
+
+Integrity Check
+
+├── Success
+
+│      ↓
+
+│ Runtime Recognition Ready
+
+│
+
+└── Failure
+
+       ↓
+
+Require Recalibration
+```
+
+Only validated profiles shall be made available to the Recognition Engine.
+
+---
+
+# 12.10 Integrity Verification
+
+Every loaded Calibration Profile shall undergo integrity verification before activation.
+
+Verification includes:
+
+- successful deserialization
+- structural completeness
+- valid metadata
+- numerical validation
+- version compatibility
+
+Profiles failing integrity verification shall be rejected immediately.
+
+---
+
+# 12.11 Profile Replacement
+
+A Calibration Profile may be replaced only after successful completion of an entirely new calibration session.
+
+The replacement process is:
+
+```
+Existing Profile
+
+↓
+
+Complete New Calibration
+
+↓
+
+Quality Assessment
+
+↓
+
+Persist New Profile
+
+↓
+
+Activate New Profile
+
+↓
+
+Remove Previous Profile
+```
+
+Partial updates to an existing Calibration Profile are prohibited.
+
+---
+
+# 12.12 Failure Handling
+
+Possible persistence failures include:
+
+| Failure | Recovery |
+|----------|----------|
+| Serialization failure | Abort persistence |
+| Storage write failure | Retry or report error |
+| Corrupted profile | Reject profile |
+| Version incompatibility | Request recalibration |
+| Integrity check failure | Discard stored profile |
+
+Persistence failures shall never result in a partially activated Calibration Profile.
+
+---
+
+# 12.13 Engineering Constraints
+
+The Persistence subsystem shall satisfy the following constraints.
+
+- Only validated profiles may be persisted.
+- Persisted profiles shall remain immutable.
+- Serialization shall be deterministic.
+- Raw calibration samples shall not be stored.
+- Every persisted profile shall contain explicit version metadata.
+- Loading shall always perform integrity verification before activation.
+
+These constraints ensure reliable long-term operation and compatibility across software updates.
+
+---
+
+# 12.14 Relationship to Runtime Recognition
+
+Persistence provides the bridge between calibration and runtime recognition.
+
+```
+Calibration Session
+
+↓
+
+Calibration Profile
+
+↓
+
+Persistence
+
+↓
+
+Application Restart
+
+↓
+
+Profile Loading
+
+↓
+
+Recognition Engine
+```
+
+The Recognition Engine shall consume only successfully restored and validated Calibration Profiles.
+
+---
+
+# 12.15 Summary
+
+Calibration Profile Persistence ensures that validated Calibration Profiles are durably stored, versioned, and restored without loss of information or statistical integrity. By enforcing deterministic serialization, explicit compatibility checks, and mandatory integrity verification, the subsystem guarantees that runtime recognition always operates on trusted calibration data while eliminating the need for repeated calibration across application sessions.
+
+The following section defines **Recalibration Strategy**, specifying the conditions under which an existing Calibration Profile should be updated, replaced, or invalidated to maintain long-term recognition accuracy.
+
+# 13. Recalibration Strategy
+
+## 13.1 Overview
+
+Recalibration is the process of replacing an existing Calibration Profile with a newly generated profile when the current profile no longer accurately represents the acoustic characteristics of the device or the user's interaction behavior.
+
+Unlike initial calibration, recalibration begins with the existence of an active Calibration Profile. The objective is to determine when that profile should remain valid, when it should be replaced, and how the transition between profiles shall occur without compromising recognition reliability.
+
+Recalibration is intended to maintain long-term recognition accuracy throughout the operational lifetime of the Tapper Recognition System.
+
+---
+
+## 13.2 Objectives
+
+The Recalibration Strategy shall satisfy the following objectives.
+
+- Maintain long-term recognition accuracy
+- Detect obsolete calibration profiles
+- Support safe profile replacement
+- Minimize unnecessary recalibration
+- Preserve deterministic behavior
+- Prevent invalid profile activation
+
+The subsystem shall ensure that runtime recognition always operates using the most representative Calibration Profile available.
+
+---
+
+# 13.3 Recalibration Philosophy
+
+Calibration is not assumed to remain permanently valid.
+
+The acoustic characteristics of a device may evolve over time due to:
+
+- hardware aging
+- protective cases
+- environmental changes
+- microphone degradation
+- software updates
+- changes in user tapping behavior
+
+Accordingly, the Calibration System shall support controlled regeneration of statistical models whenever necessary.
+
+Recalibration shall always replace—not modify—the existing Calibration Profile.
+
+---
+
+# 13.4 Types of Recalibration
+
+The Tapper Recognition System recognizes three categories of recalibration.
+
+### User-Initiated Recalibration
+
+The user explicitly requests a new calibration session.
+
+Examples include:
+
+- device configuration changes
+- preference updates
+- troubleshooting
+- manual recalibration
+
+---
+
+### System-Initiated Recalibration
+
+The application recommends recalibration based on observed runtime conditions.
+
+Possible triggers include:
+
+- repeated recognition failures
+- reduced confidence scores
+- abnormal runtime statistics
+- profile validation failure
+
+The final decision to recalibrate remains implementation-specific.
+
+---
+
+### Mandatory Recalibration
+
+Certain events invalidate the existing Calibration Profile.
+
+Examples include:
+
+- incompatible algorithm version
+- incompatible feature schema
+- corrupted profile
+- failed integrity verification
+
+Runtime recognition shall not proceed until a new Calibration Profile has been generated.
+
+---
+
+# 13.5 Recalibration Workflow
+
+The recalibration process follows the same workflow as initial calibration.
+
+```
+Existing Profile
+
+↓
+
+Begin New Calibration
+
+↓
+
+Sample Collection
+
+↓
+
+Validation
+
+↓
+
+Statistical Generation
+
+↓
+
+Quality Assessment
+
+↓
+
+Persist New Profile
+
+↓
+
+Activate New Profile
+```
+
+The existing profile shall remain active until the replacement profile has been successfully generated and validated.
+
+---
+
+# 13.6 Profile Replacement
+
+Profile replacement shall be atomic.
+
+```
+Old Profile
+
+↓
+
+Generate New Profile
+
+↓
+
+Validate
+
+↓
+
+Persist
+
+↓
+
+Activate
+
+↓
+
+Delete Old Profile
+```
+
+At no point shall the Recognition Engine operate without a valid Calibration Profile.
+
+Partial replacement is prohibited.
+
+---
+
+# 13.7 Runtime Considerations
+
+If recalibration is performed while the application is operational:
+
+- runtime recognition may continue using the existing profile
+- calibration shall operate independently
+- activation of the new profile shall occur only after successful completion
+
+The transition between profiles shall occur without exposing partially generated statistical models.
+
+---
+
+# 13.8 Recalibration Triggers
+
+Typical triggers include:
+
+### Profile Incompatibility
+
+Examples:
+
+- unsupported profile version
+- incompatible algorithm version
+- invalid feature schema
+
+---
+
+### Recognition Performance
+
+Examples:
+
+- persistent recognition failures
+- consistently low confidence
+- repeated false classifications
+
+---
+
+### Hardware Changes
+
+Examples:
+
+- microphone replacement
+- protective case installation
+- major operating system update
+- device replacement
+
+---
+
+### User Request
+
+The user may initiate recalibration at any time.
+
+User-initiated recalibration shall override all automatic recommendations.
+
+---
+
+# 13.9 Profile Migration
+
+Calibration Profiles shall not be migrated between incompatible algorithm versions.
+
+Instead:
+
+```
+Old Profile
+
+↓
+
+Version Check
+
+↓
+
+Compatible?
+
+├── Yes
+
+│      ↓
+
+│ Continue
+
+│
+
+└── No
+
+       ↓
+
+Require Recalibration
+```
+
+Statistical parameters generated under one algorithm version shall not be transformed into another through heuristic conversion.
+
+---
+
+# 13.10 Failure Handling
+
+If recalibration fails:
+
+```
+Existing Profile
+
+↓
+
+Attempt Recalibration
+
+↓
+
+Failure
+
+↓
+
+Retain Existing Profile
+```
+
+Provided the existing profile remains valid, runtime recognition may continue.
+
+If no valid profile exists, runtime recognition shall remain unavailable until successful calibration completes.
+
+---
+
+# 13.11 Engineering Constraints
+
+The Recalibration subsystem shall satisfy the following constraints.
+
+- Existing profiles shall never be modified directly.
+- New profiles shall undergo complete Quality Assessment.
+- Profile replacement shall be atomic.
+- Failed recalibration shall not invalidate an otherwise healthy profile.
+- Mandatory recalibration shall prevent runtime recognition.
+- Every recalibration session shall generate a completely new Calibration Profile.
+
+These constraints preserve both recognition reliability and profile integrity.
+
+---
+
+# 13.12 Relationship to Other Components
+
+Recalibration interacts with multiple subsystems.
+
+```
+Runtime Recognition
+
+↓
+
+Performance Monitoring
+
+↓
+
+Recalibration Decision
+
+↓
+
+Calibration Pipeline
+
+↓
+
+Quality Assessment
+
+↓
+
+Persistence
+
+↓
+
+Recognition Engine
+```
+
+The subsystem acts as the long-term maintenance mechanism for the Calibration System.
+
+---
+
+# 13.13 Summary
+
+The Recalibration Strategy defines the lifecycle management of Calibration Profiles beyond their initial creation. By distinguishing between user-initiated, system-recommended, and mandatory recalibration scenarios, the subsystem ensures that recognition accuracy is maintained throughout the operational lifetime of the application. Through atomic profile replacement, deterministic regeneration, and strict compatibility enforcement, recalibration preserves the reliability and mathematical integrity of the Tapper Recognition System while allowing it to adapt safely to changes in hardware, software, and user interaction patterns.
+
+The following section defines **Calibration Failure Handling**, specifying the detection, classification, recovery, and reporting of failures encountered during the calibration process.
+
+# 14. Calibration Failure Handling
+
+## 14.1 Overview
+
+Calibration Failure Handling defines the mechanisms by which the Calibration System detects, classifies, reports, and recovers from failures encountered during the calibration process.
+
+Calibration is a multi-stage pipeline involving audio acquisition, digital signal processing, feature extraction, statistical estimation, and persistent storage. Failure may occur at any stage due to hardware limitations, environmental conditions, software faults, or invalid user interactions.
+
+The objective of this subsystem is to ensure that failures are detected early, isolated to the affected subsystem whenever possible, and communicated clearly without compromising the integrity of the generated Calibration Profile.
+
+Under no circumstances shall an incomplete or partially validated Calibration Profile become active.
+
+---
+
+## 14.2 Objectives
+
+The Calibration Failure Handling subsystem shall satisfy the following objectives.
+
+- Detect failures immediately
+- Prevent propagation of invalid data
+- Preserve calibration integrity
+- Provide deterministic recovery behavior
+- Produce meaningful diagnostic information
+- Prevent activation of invalid profiles
+
+Failure handling shall prioritize correctness over calibration completion.
+
+---
+
+# 14.3 Failure Philosophy
+
+Failures occurring during calibration fall into two broad categories.
+
+### Recoverable Failures
+
+Recoverable failures affect individual calibration operations but do not invalidate the entire calibration session.
+
+Examples include:
+
+- weak tap
+- excessive background noise
+- accidental double tap
+- clipped recording
+- invalid sample
+
+Recovery consists of requesting another calibration sample.
+
+---
+
+### Unrecoverable Failures
+
+Unrecoverable failures prevent successful completion of calibration.
+
+Examples include:
+
+- microphone unavailable
+- corrupted statistical model
+- failed persistence
+- incompatible algorithm version
+- repeated subsystem failure
+
+These failures terminate the calibration session.
+
+---
+
+# 14.4 Failure Classification
+
+Failures are classified according to the subsystem in which they originate.
+
+| Subsystem | Example Failure |
+|-----------|-----------------|
+| Audio Acquisition | Microphone unavailable |
+| DSP Processing | Invalid audio frame |
+| Feature Extraction | Feature computation failed |
+| Sample Validation | Invalid calibration sample |
+| Statistical Generation | Singular covariance matrix |
+| Threshold Generation | Threshold computation failed |
+| Persistence | Profile save failure |
+| Runtime Environment | Insufficient permissions |
+
+Classification enables subsystem-specific recovery procedures.
+
+---
+
+# 14.5 Failure Detection
+
+Each subsystem shall validate its outputs before publishing them to downstream components.
+
+```
+Subsystem
+
+↓
+
+Validation
+
+├── Success
+
+│      ↓
+
+│ Publish Output
+
+│
+
+└── Failure
+
+       ↓
+
+Generate Error
+
+↓
+
+Recovery Decision
+```
+
+Invalid outputs shall never propagate beyond the subsystem in which they originated.
+
+---
+
+# 14.6 Failure Propagation
+
+Failures shall propagate only to the Calibration Controller.
+
+```
+Subsystem
+
+↓
+
+Calibration Controller
+
+↓
+
+Recovery Decision
+
+├── Retry
+
+├── Continue
+
+└── Abort Calibration
+```
+
+Subsystems shall not communicate failures directly to one another.
+
+The Calibration Controller is solely responsible for determining the appropriate recovery strategy.
+
+---
+
+# 14.7 Recovery Strategies
+
+The recovery strategy depends upon the severity of the detected failure.
+
+### Retry
+
+Applicable to transient failures.
+
+Examples:
+
+- weak tap
+- environmental noise
+- incomplete recording
+
+Action:
+
+Request another calibration sample.
+
+---
+
+### Repeat Stage
+
+Applicable when an entire processing stage must be re-executed.
+
+Examples:
+
+- DSP processing failure
+- temporary resource exhaustion
+
+Action:
+
+Repeat the affected processing stage without restarting calibration.
+
+---
+
+### Restart Calibration
+
+Applicable when statistical consistency can no longer be guaranteed.
+
+Examples:
+
+- excessive rejected samples
+- corrupted calibration dataset
+- invalid statistical model
+
+Action:
+
+Discard current session and begin a new calibration session.
+
+---
+
+### Abort Calibration
+
+Applicable when recovery is impossible.
+
+Examples:
+
+- microphone unavailable
+- storage unavailable
+- unrecoverable internal error
+
+Action:
+
+Terminate calibration and notify the application.
+
+---
+
+# 14.8 Failure Logging
+
+Every failure shall generate a structured error record.
+
+The error record should include:
+
+- timestamp
+- subsystem
+- error category
+- severity
+- operation
+- diagnostic message
+- recovery action
+
+The exact structure is defined in the Error Models Specification.
+
+Logging shall not modify calibration behavior.
+
+---
+
+# 14.9 User Notification
+
+The Calibration System shall notify the user only when user action is required.
+
+Examples include:
+
+- retry tap
+- reduce background noise
+- enable microphone permission
+- restart calibration
+
+Implementation-specific user interface details are outside the scope of this specification.
+
+---
+
+# 14.10 Failure During Profile Generation
+
+If a failure occurs after statistical computation has begun:
+
+```
+Statistical Generation
+
+↓
+
+Failure
+
+↓
+
+Discard Profile
+
+↓
+
+Release Resources
+
+↓
+
+Restart or Abort
+```
+
+Partial statistical models shall never be persisted.
+
+---
+
+# 14.11 Failure During Persistence
+
+If profile persistence fails:
+
+```
+Validated Profile
+
+↓
+
+Persistence Failure
+
+↓
+
+Discard Write
+
+↓
+
+Retain Existing Profile
+```
+
+If no previous profile exists, runtime recognition shall remain unavailable until persistence succeeds.
+
+---
+
+# 14.12 Deterministic Recovery
+
+Given identical failures under identical conditions, the Calibration System shall always perform the same recovery action.
+
+Recovery decisions shall not depend on:
+
+- randomness
+- execution timing
+- user history
+- previous calibration sessions
+
+Deterministic recovery simplifies verification and debugging.
+
+---
+
+# 14.13 Engineering Constraints
+
+The Failure Handling subsystem shall satisfy the following constraints.
+
+- Failures shall be detected as early as possible.
+- Invalid data shall never propagate downstream.
+- Recovery actions shall be deterministic.
+- Incomplete Calibration Profiles shall never be activated.
+- Recoverable failures shall not invalidate successful calibration data unless statistical integrity is compromised.
+- Every unrecoverable failure shall terminate the calibration session cleanly.
+
+These constraints preserve system reliability and mathematical correctness.
+
+---
+
+# 14.14 Relationship to Other Components
+
+Failure Handling interacts with every calibration subsystem.
+
+```
+Calibration Pipeline
+
+↓
+
+Failure Detection
+
+↓
+
+Calibration Controller
+
+↓
+
+Recovery Strategy
+
+↓
+
+Continue
+
+or
+
+Abort
+```
+
+This centralized model ensures consistent behavior regardless of where a failure originates.
+
+---
+
+# 14.15 Summary
+
+Calibration Failure Handling provides a comprehensive framework for detecting, classifying, recovering from, and reporting failures throughout the calibration lifecycle. By distinguishing between recoverable and unrecoverable failures, centralizing recovery decisions within the Calibration Controller, and preventing invalid data from propagating through the calibration pipeline, the subsystem guarantees that only complete, mathematically valid Calibration Profiles are made available for runtime recognition.
+
+The following section defines **Performance Requirements**, specifying the computational, memory, latency, and scalability requirements of the Calibration System.
+
+# 15. Performance Requirements
+
+## 15.1 Overview
+
+The Performance Requirements defined in this section establish the computational, memory, storage, and responsiveness expectations of the Calibration System.
+
+Unlike the Runtime Recognition Engine, which operates continuously and must satisfy strict real-time constraints, calibration is an infrequent operation that prioritizes statistical correctness over raw execution speed. Nevertheless, calibration should complete within a reasonable duration while maintaining deterministic behavior and efficient resource utilization.
+
+The requirements in this section define engineering targets rather than implementation-specific optimizations.
+
+---
+
+## 15.2 Objectives
+
+The Calibration System shall satisfy the following performance objectives.
+
+- Complete calibration within a reasonable duration
+- Maintain deterministic execution time
+- Minimize memory consumption
+- Avoid unnecessary computational overhead
+- Scale predictably with dataset size
+- Preserve numerical accuracy
+
+Performance optimizations shall never compromise statistical correctness.
+
+---
+
+# 15.3 Computational Complexity
+
+Each stage of the calibration pipeline shall exhibit predictable computational complexity.
+
+Typical complexity characteristics are summarized below.
+
+| Subsystem | Expected Complexity |
+|-----------|---------------------|
+| Audio Acquisition | O(n) |
+| DSP Processing | O(n log n) |
+| Feature Extraction | O(n) |
+| Sample Validation | O(f) |
+| Outlier Detection | O(sf²) or implementation-dependent |
+| Statistical Generation | O(sf²) |
+| Threshold Generation | O(f²) |
+| Persistence | O(profile size) |
+
+Where:
+
+- **n** = audio sample count
+- **f** = feature dimension
+- **s** = accepted calibration samples
+
+Algorithmic complexity may vary with future algorithm versions but shall remain deterministic.
+
+---
+
+# 15.4 Calibration Duration
+
+A complete calibration session should complete within a duration acceptable for interactive use.
+
+Calibration duration depends upon:
+
+- number of interaction zones
+- required sample count
+- user response time
+- hardware performance
+- environmental conditions
+
+The system shall minimize unnecessary waiting while ensuring sufficient data quality.
+
+The specification intentionally avoids prescribing absolute timing limits to maintain platform independence.
+
+---
+
+# 15.5 Memory Requirements
+
+The Calibration System shall use memory efficiently throughout the calibration session.
+
+Memory shall primarily be allocated for:
+
+- temporary audio buffers
+- DSP intermediate data
+- Feature Vectors
+- statistical models
+- Calibration Profile construction
+
+Temporary processing data shall be released immediately after it is no longer required.
+
+---
+
+# 15.6 Storage Requirements
+
+Persistent storage requirements are expected to remain modest.
+
+The Calibration Profile shall contain only:
+
+- statistical parameters
+- thresholds
+- metadata
+- version information
+
+Raw audio recordings and intermediate DSP outputs shall not be retained after calibration completes.
+
+This minimizes storage consumption while preserving all information required for runtime recognition.
+
+---
+
+# 15.7 Scalability
+
+The Calibration Architecture shall scale predictably as future algorithm versions evolve.
+
+Scalability considerations include:
+
+- increased feature dimensions
+- additional interaction zones
+- larger calibration datasets
+- enhanced statistical models
+
+The architecture shall support such extensions without requiring fundamental redesign.
+
+---
+
+# 15.8 Deterministic Performance
+
+Performance characteristics shall remain deterministic for identical calibration datasets.
+
+Given:
+
+- identical hardware
+- identical software version
+- identical calibration samples
+
+the Calibration System should exhibit comparable computational behavior across repeated executions.
+
+Minor operating system scheduling variations are acceptable provided they do not affect calibration results.
+
+---
+
+# 15.9 Resource Management
+
+The Calibration System shall manage computational resources responsibly.
+
+Resources include:
+
+- microphone access
+- processor utilization
+- memory allocation
+- persistent storage
+- temporary objects
+
+Resources shall be acquired only when required and released immediately upon completion of the associated processing stage.
+
+Long-lived resource ownership is discouraged unless explicitly required.
+
+---
+
+# 15.10 Concurrency
+
+Version 1 assumes a single active calibration session.
+
+Accordingly:
+
+- only one Calibration Controller shall exist
+- only one statistical generation process shall execute
+- concurrent profile generation is prohibited
+- concurrent profile persistence is prohibited
+
+Individual implementation details may employ internal parallelism provided deterministic behavior is preserved.
+
+---
+
+# 15.11 Performance Monitoring
+
+The implementation may collect performance diagnostics during calibration.
+
+Examples include:
+
+- stage execution time
+- memory consumption
+- CPU utilization
+- rejected sample rate
+- processing latency
+
+These measurements are intended solely for diagnostics and optimization.
+
+They shall not influence calibration outcomes.
+
+---
+
+# 15.12 Engineering Constraints
+
+The Calibration System shall satisfy the following constraints.
+
+- Performance optimizations shall not modify statistical results.
+- Resource usage shall remain proportional to calibration dataset size.
+- Temporary resources shall be released promptly.
+- Calibration shall remain deterministic regardless of execution speed.
+- Performance monitoring shall remain passive.
+- Runtime recognition performance shall remain independent of calibration performance.
+
+These constraints preserve correctness while enabling efficient implementations.
+
+---
+
+# 15.13 Relationship to Runtime Recognition
+
+Calibration and Runtime Recognition have different performance priorities.
+
+```
+Calibration
+
+↓
+
+Statistical Correctness
+
+↓
+
+Persistent Profile
+
+↓
+
+Runtime Recognition
+
+↓
+
+Low-Latency Decision Making
+```
+
+Calibration is optimized for model quality and reproducibility, whereas runtime recognition is optimized for responsiveness.
+
+The two subsystems therefore have distinct performance requirements despite sharing statistical models.
+
+---
+
+# 15.14 Future Optimization Opportunities
+
+Future algorithm versions may improve calibration performance through:
+
+- incremental statistical updates
+- optimized matrix operations
+- hardware-accelerated DSP
+- parallel feature extraction
+- optimized persistence mechanisms
+- adaptive sample collection strategies
+
+Such optimizations shall preserve deterministic outputs and remain compatible with the architectural principles defined throughout this specification.
+
+---
+
+# 15.15 Summary
+
+The Performance Requirements establish the engineering expectations governing the efficiency, scalability, and resource utilization of the Calibration System. By emphasizing deterministic execution, proportional resource consumption, and clear separation between calibration and runtime performance goals, these requirements ensure that calibration remains computationally practical while maintaining the statistical rigor necessary for reliable recognition.
+
+The following section, **Future Extensions**, concludes this specification by outlining anticipated enhancements to the Calibration System and the architectural provisions that support their integration in subsequent versions of the Tapper Recognition System.
+
+# 16. Future Extensions
+
+## 16.1 Overview
+
+The Calibration System defined in this specification has been designed as a deterministic, modular, and extensible architecture. While Version 1 provides a robust statistical calibration framework for four interaction zones using handcrafted acoustic features, the architecture intentionally permits future enhancements without requiring fundamental redesign.
+
+This section identifies potential future extensions and establishes the engineering principles governing their integration into subsequent versions of the Tapper Recognition System.
+
+Future extensions shall preserve the core architectural principles defined throughout this specification, including determinism, statistical correctness, reproducibility, and separation of concerns.
+
+---
+
+## 16.2 Design Philosophy
+
+Future enhancements shall adhere to the following principles.
+
+- Preserve backward architectural compatibility where practical
+- Maintain deterministic calibration behavior
+- Avoid introducing unnecessary subsystem coupling
+- Support incremental evolution
+- Ensure mathematical correctness
+- Preserve reproducibility across calibration sessions
+
+No future enhancement shall compromise the integrity of the Calibration Profile.
+
+---
+
+# 16.3 Additional Interaction Zones
+
+Future versions may support a larger number of logical interaction regions.
+
+Potential extensions include:
+
+- center interaction zone
+- edge interaction zones
+- side-frame interaction zones
+- custom user-defined regions
+- dynamic zone layouts
+
+Supporting additional zones shall require:
+
+- updated `InteractionZone` definitions
+- revised calibration workflow
+- regenerated statistical models
+- updated recognition algorithms
+
+The remainder of the calibration architecture shall remain unchanged.
+
+---
+
+# 16.4 Enhanced Feature Extraction
+
+Future algorithm versions may introduce additional acoustic features.
+
+Possible additions include:
+
+- Mel-frequency cepstral coefficients (MFCCs)
+- spectral entropy
+- spectral flatness
+- spectral flux
+- zero-crossing rate
+- harmonic ratio
+- resonance descriptors
+- transient sharpness metrics
+
+Such features shall be incorporated into the Feature Vector through version-controlled schema updates.
+
+---
+
+# 16.5 Advanced Statistical Models
+
+Although Version 1 employs deterministic multivariate statistical modeling, future versions may incorporate more sophisticated mathematical techniques.
+
+Potential enhancements include:
+
+- Gaussian Mixture Models
+- Bayesian classifiers
+- robust covariance estimation
+- kernel density estimation
+- probabilistic confidence modeling
+- adaptive covariance regularization
+
+Any statistical enhancement shall remain mathematically reproducible and version-controlled.
+
+---
+
+# 16.6 Adaptive Calibration
+
+Future versions may support adaptive calibration techniques.
+
+Examples include:
+
+- incremental profile refinement
+- background statistical updates
+- passive runtime sample collection
+- profile confidence monitoring
+- adaptive threshold adjustment
+
+Adaptive calibration introduces additional complexity and shall preserve deterministic runtime behavior.
+
+---
+
+# 16.7 Calibration Analytics
+
+Future implementations may provide richer diagnostic capabilities.
+
+Examples include:
+
+- calibration quality reports
+- interaction zone heat maps
+- feature variance visualization
+- statistical cluster visualization
+- profile health monitoring
+- calibration history tracking
+
+These analytics are intended solely for diagnostics and shall not modify the Calibration Profile automatically.
+
+---
+
+# 16.8 Multi-Device Support
+
+The current specification assumes one Calibration Profile per device.
+
+Future versions may support:
+
+- profile synchronization
+- multiple device profiles
+- device-specific profile selection
+- profile export and import
+- cloud-backed profile management
+
+Profile portability shall remain subject to compatibility validation.
+
+---
+
+# 16.9 Accessibility Enhancements
+
+Future versions may improve accessibility during calibration.
+
+Potential enhancements include:
+
+- voice-guided calibration
+- haptic progress feedback
+- adaptive pacing
+- large-format visual guidance
+- configurable interaction prompts
+
+Accessibility improvements shall remain independent of statistical computation.
+
+---
+
+# 16.10 Performance Optimizations
+
+Future implementations may improve calibration efficiency through:
+
+- parallel feature extraction
+- optimized matrix computations
+- hardware-accelerated DSP
+- incremental statistical updates
+- reduced memory allocation
+- optimized persistence strategies
+
+Performance improvements shall preserve identical calibration outputs for identical inputs.
+
+---
+
+# 16.11 Machine Learning Integration
+
+Future research may evaluate hybrid recognition systems combining deterministic statistical models with machine learning.
+
+Possible integrations include:
+
+- neural feature extraction
+- confidence estimation models
+- anomaly detection networks
+- ensemble classifiers
+
+Any machine learning component shall remain optional and shall not replace the deterministic calibration workflow defined in this specification without corresponding architectural revisions.
+
+---
+
+# 16.12 Engineering Constraints
+
+Future extensions shall satisfy the following constraints.
+
+- Existing Calibration Profiles shall remain version-aware.
+- Statistical correctness shall be preserved.
+- Calibration determinism shall not be compromised.
+- Architectural layering shall remain intact.
+- Backward compatibility shall be explicitly evaluated for every major revision.
+- New functionality shall be isolated to the appropriate subsystem.
+
+These constraints ensure that the Calibration System evolves without sacrificing maintainability or correctness.
+
+---
+
+# 16.13 Relationship to the Overall Architecture
+
+Future calibration enhancements shall integrate with the existing Tapper architecture through well-defined subsystem boundaries.
+
+```
+Future Enhancement
+
+↓
+
+Calibration Subsystem
+
+↓
+
+Calibration Profile
+
+↓
+
+Recognition Engine
+
+↓
+
+Command Execution
+```
+
+The Calibration System shall remain the sole authority responsible for generating valid Calibration Profiles, regardless of future algorithmic advancements.
+
+---
+
+# 16.14 Conclusion
+
+The Calibration System described in this specification establishes a deterministic and statistically rigorous foundation for the Tapper Recognition System. Through structured sample acquisition, feature extraction, validation, statistical modeling, threshold generation, quality assessment, persistence, and controlled lifecycle management, the subsystem produces reliable Calibration Profiles that enable accurate runtime recognition.
+
+The architecture has been intentionally designed to accommodate future advancements in signal processing, statistical modeling, and user interaction while preserving the engineering principles of determinism, modularity, reproducibility, and mathematical correctness. As the Tapper project evolves, the Calibration System shall continue to serve as the authoritative source of statistical knowledge from which all runtime recognition decisions are derived.
+
+---
+
+# Appendix A — Glossary
+
+| Term | Definition |
+|------|------------|
+| Calibration Profile | The complete statistical model generated during calibration and consumed by the Recognition Engine. |
+| Calibration Session | One complete execution of the calibration workflow covering every interaction zone. |
+| Interaction Zone | A predefined logical region of the device used for tap recognition. |
+| Feature Vector | A numerical representation of a processed tap event. |
+| Mean Vector | The statistical centroid of all accepted Feature Vectors for an Interaction Zone. |
+| Covariance Matrix | A matrix describing feature variance and correlation. |
+| Threshold | The decision boundary used during runtime recognition. |
+| Outlier | A statistically anomalous calibration sample removed prior to model generation. |
+
+---
+
+# Appendix B — References
+
+The calibration architecture described in this specification is based upon principles established in:
+
+- IEEE Standard 754 — Floating Point Arithmetic
+- RFC 4122 — Universally Unique Identifiers
+- Apple AVFoundation Framework Documentation
+- Apple Accelerate Framework Documentation
+- Mahalanobis, P. C. (1936). *On the Generalized Distance in Statistics.*
+- Numerical Recipes: The Art of Scientific Computing
+- Pattern Recognition and Machine Learning — Christopher Bishop
+- The Elements of Statistical Learning — Hastie, Tibshirani, and Friedman
+
+---
+
+# Appendix C — Revision History
+
+| Version | Date | Description |
+|---------|------|-------------|
+| 1.0 | Initial Release | First complete engineering specification for the Calibration System. |
+
