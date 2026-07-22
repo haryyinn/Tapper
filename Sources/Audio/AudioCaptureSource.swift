@@ -7,8 +7,10 @@
 ///
 /// A source delivers samples into a ``RollingAudioBuffer`` supplied at
 /// construction time. The abstraction itself makes no assumption about the size
-/// or cadence of delivered sample blocks.
-public protocol AudioCaptureSource: AnyObject, Sendable {
+/// or cadence of delivered sample blocks. The delivery destination — the ring
+/// buffer — is itself `Sendable` and thread-safe; the source object is used from
+/// the controlling thread, so it need not be `Sendable`.
+public protocol AudioCaptureSource: AnyObject {
 
     /// Whether capture is currently active.
     var isRunning: Bool { get }
