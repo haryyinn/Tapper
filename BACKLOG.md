@@ -26,3 +26,20 @@ records what to build, the governing rationale, and acceptance criteria.
 - **Acceptance:** starting capture on a non-conforming format returns/raises a
   clear capability/configuration error and delivers no samples; conforming
   formats are unaffected.
+
+## Documentation
+
+### BL-2 — Clarify that Peak Amplitude is measured before normalization
+
+- **Status:** Open (documentation task — no code change required).
+- **Origin:** Phase 2, commit 4.
+- **What:** `ALGORITHM` §14.4 defines Peak Amplitude as `max(|x[n]|)` of the
+  *normalized* waveform. Because peak normalization (§10.2) forces that maximum
+  to a constant 1.0, the formula is degenerate and contradicts the feature's own
+  stated purpose (rejecting weak events) and its "Normalized (0–1)" unit (§15.6).
+- **Resolution in code:** per project decision, Peak Amplitude is measured as
+  `max(|x|)` of the filtered signal **immediately before** normalization (the
+  normalization divisor). This is documented inline in
+  `TimeDomainFeatures.peakAmplitude`.
+- **Action:** update `ALGORITHM` §14.4 to state that Peak Amplitude is measured
+  prior to normalization, keeping the public feature name "Peak Amplitude".
