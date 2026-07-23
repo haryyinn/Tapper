@@ -43,3 +43,15 @@ records what to build, the governing rationale, and acceptance criteria.
   `TimeDomainFeatures.peakAmplitude`.
 - **Action:** update `ALGORITHM` §14.4 to state that Peak Amplitude is measured
   prior to normalization, keeping the public feature name "Peak Amplitude".
+
+### BL-3 — Clarify the meaning of "spectral energy" in Spectral Roll-off
+
+- **Status:** Open (documentation task — no code change required).
+- **Origin:** Phase 2 review (approved).
+- **What:** `ALGORITHM` §14.8 defines Spectral Roll-off via "85% of the spectral
+  energy" without defining "energy". The implementation uses cumulative spectral
+  energy Σ|X|² (the formal definition of energy), documented inline in
+  `SpectralFeatures.spectralRollOff`.
+- **Action:** update `ALGORITHM` §14.8 to state explicitly that spectral energy
+  means the sum of squared magnitudes. The implementation is the approved
+  interpretation and shall not change as part of this cleanup.
