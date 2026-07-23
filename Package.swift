@@ -22,15 +22,18 @@ let package = Package(
         .library(name: "Audio", targets: ["Audio"]),
         .library(name: "DSP", targets: ["DSP"]),
         .library(name: "Features", targets: ["Features"]),
+        .library(name: "Detection", targets: ["Detection"]),
     ],
     targets: [
         .target(name: "Tapper"),
         .target(name: "Audio"),
         .target(name: "DSP"),
         .target(name: "Features", dependencies: ["DSP"]),
+        .target(name: "Detection", dependencies: ["DSP", "Features"]),
         .testTarget(name: "TapperTests", dependencies: ["Tapper"]),
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),
         .testTarget(name: "FeaturesTests", dependencies: ["Features", "DSP"]),
+        .testTarget(name: "DetectionTests", dependencies: ["Detection", "Features", "DSP"]),
     ]
 )
