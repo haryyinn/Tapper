@@ -55,3 +55,17 @@ records what to build, the governing rationale, and acceptance criteria.
 - **Action:** update `ALGORITHM` §14.8 to state explicitly that spectral energy
   means the sum of squared magnitudes. The implementation is the approved
   interpretation and shall not change as part of this cleanup.
+
+## Detection
+
+### BL-4 — Double-impulse rejection (deferred, optional per specification)
+
+- **Status:** Open (future — candidate for Phase 9 tuning).
+- **Origin:** Phase 3 plan (approved).
+- **What:** `ALGORITHM` §19.15 states that a candidate window containing
+  multiple dominant peaks "**may** be rejected as ambiguous" — the behavior is
+  optional and the peak-multiplicity method is unspecified. Phase 3 defers it:
+  no double-impulse detector is implemented, which is spec-compliant.
+- **Action:** during Phase 9 empirical validation, decide whether double-impulse
+  rejection measurably reduces false positives; if adopted, specify the
+  peak-multiplicity rule as a named configurable constant and update the docs.
