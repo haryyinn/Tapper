@@ -58,6 +58,9 @@ public enum CalibrationError: Error, Equatable {
     /// No samples were provided for the zone.
     case emptyDataset
 
+    /// Profile generation was requested before all zones were collected.
+    case notReadyToGenerate
+
     /// Too few samples survived outlier rejection to build a stable model.
     case insufficientRetainedSamples(retained: Int, required: Int)
 

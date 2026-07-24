@@ -1,5 +1,3 @@
-import Features
-
 extension FeatureVector {
 
     /// The number of features in the canonical vector (Version 1).

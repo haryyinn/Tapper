@@ -119,7 +119,7 @@ public struct CalibrationSession {
         createdAt: Date,
         id: UUID = UUID()
     ) -> Result<CalibrationProfile, CalibrationError> {
-        guard case .readyToGenerate = state else { return .failure(.emptyDataset) }
+        guard case .readyToGenerate = state else { return .failure(.notReadyToGenerate) }
 
         let allSamples = InteractionZone.calibratable.flatMap { samplesByZone[$0] ?? [] }
         let normalization = NormalizationParameters.compute(from: allSamples)

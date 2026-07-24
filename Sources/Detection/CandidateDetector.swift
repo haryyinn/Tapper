@@ -24,7 +24,8 @@ public struct CandidateDetector: Sendable, Equatable {
     /// - Returns: `true` when the frame's peak magnitude reaches the threshold;
     ///   `false` otherwise (including for an empty frame).
     public func detectsCandidate(inFiltered filteredSignal: [Double]) -> Bool {
+        guard !filteredSignal.isEmpty else { return false }
         let peak = filteredSignal.reduce(0.0) { Swift.max($0, abs($1)) }
-        return peak >= peakThreshold && !filteredSignal.isEmpty
+        return peak >= peakThreshold
     }
 }

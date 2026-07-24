@@ -91,6 +91,6 @@ final class CalibrationSessionTests: XCTestCase {
     func testGenerateBeforeReadyFails() {
         var session = makeSession()
         session.begin()
-        XCTAssertEqual(session.generateProfile(createdAt: Date()), .failure(.emptyDataset))
+        XCTAssertEqual(session.generateProfile(createdAt: Date()), .failure(.notReadyToGenerate))
     }
 }

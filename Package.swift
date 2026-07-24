@@ -38,7 +38,8 @@ let package = Package(
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),
         .testTarget(name: "FeaturesTests", dependencies: ["Features", "DSP"]),
-        .testTarget(name: "DetectionTests", dependencies: ["Detection", "Features", "DSP"]),
+        .testTarget(
+            name: "DetectionTests", dependencies: ["Detection", "Features", "DSP", "Audio"]),
         .testTarget(name: "CalibrationTests", dependencies: ["Calibration", "Features"]),
         .testTarget(
             name: "ClassificationTests",

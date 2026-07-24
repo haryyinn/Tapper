@@ -9,14 +9,23 @@ public enum MahalanobisDistance {
     ///
     /// - Parameters:
     ///   - vector: The observation, canonical order.
-    ///   - mean: The zone mean vector.
-    ///   - inverseCovariance: The inverse (regularized) covariance matrix.
+    ///   - mean: The zone mean vector. Must have the same dimension as `vector`.
+    ///   - inverseCovariance: The inverse (regularized) covariance matrix. Must
+    ///     be square with dimension equal to `vector`.
     /// - Returns: The squared distance.
+    /// - Precondition: `vector`, `mean`, and each row/column of
+    ///   `inverseCovariance` share the same dimension.
     public static func squared(
         vector: [Double],
         mean: [Double],
         inverseCovariance: [[Double]]
     ) -> Double {
+        precondition(
+            vector.count == mean.count,
+            "vector and mean must have equal dimension")
+        precondition(
+            inverseCovariance.count == vector.count,
+            "inverse covariance dimension must match vector")
         let deviation = zip(vector, mean).map(-)
         var result = 0.0
         for i in deviation.indices {
