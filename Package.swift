@@ -25,6 +25,7 @@ let package = Package(
         .library(name: "Detection", targets: ["Detection"]),
         .library(name: "Calibration", targets: ["Calibration"]),
         .library(name: "Classification", targets: ["Classification"]),
+        .library(name: "Commands", targets: ["Commands"]),
     ],
     targets: [
         .target(name: "Tapper"),
@@ -34,6 +35,7 @@ let package = Package(
         .target(name: "Detection", dependencies: ["DSP", "Features"]),
         .target(name: "Calibration", dependencies: ["Features"]),
         .target(name: "Classification", dependencies: ["Features", "Calibration"]),
+        .target(name: "Commands"),
         .testTarget(name: "TapperTests", dependencies: ["Tapper"]),
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),
@@ -45,5 +47,6 @@ let package = Package(
             name: "ClassificationTests",
             dependencies: ["Classification", "Calibration", "Features"]
         ),
+        .testTarget(name: "CommandsTests", dependencies: ["Commands"]),
     ]
 )
