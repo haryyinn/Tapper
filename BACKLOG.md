@@ -69,3 +69,37 @@ records what to build, the governing rationale, and acceptance criteria.
 - **Action:** during Phase 9 empirical validation, decide whether double-impulse
   rejection measurably reduces false positives; if adopted, specify the
   peak-multiplicity rule as a named configurable constant and update the docs.
+
+## Calibration
+
+### BL-5 — Reconcile positive-definite vs positive-semi-definite covariance
+
+- **Status:** Open (documentation task — no code change required).
+- **Origin:** Phase 4 plan (approved).
+- **What:** `CALIBRATION` §9.8 lists the covariance requirement as "positive
+  **semi-definite**", contradicting `ALGORITHM` §17.21 and `DATA_MODELS` §8.4,
+  which require positive **definite** (invertible). Per precedence, positive
+  definite governs; the implementation enforces it via Cholesky, guaranteed by
+  mandatory regularization Σ' = Σ + λI.
+- **Action:** update `CALIBRATION` §9.8 to say positive definite.
+
+### BL-6 — Reconcile retention floor with "Maximum Rejected Samples"
+
+- **Status:** Open (documentation task — no code change required).
+- **Origin:** Phase 4 plan (approved).
+- **What:** A "maximum rejected samples = 10" against 20/zone could leave N = 10
+  for d = 10, yielding a singular covariance. The approved implementation uses a
+  **minimum retained = 15** floor (well above d + 1 = 11); more rejections cause
+  the calibration workflow to request additional samples.
+- **Action:** update the calibration docs to express the constraint as a minimum
+  retained count (≥ 15) rather than a maximum rejected count.
+
+### BL-7 — Relative ambiguity metric investigation
+
+- **Status:** Open (future — Phase 9 tuning).
+- **Origin:** Phase 4 plan (approved).
+- **What:** Version 1 uses an absolute ambiguity margin (best-vs-second-best
+  Mahalanobis separation, default 0.5, `ALGORITHM` §18.10). A relative or
+  ratio-based margin may generalize better across zones/users.
+- **Action:** during Phase 9, evaluate relative ambiguity metrics; adopt only
+  with a spec update. The implementation keeps the documented absolute margin.
