@@ -24,6 +24,7 @@ let package = Package(
         .library(name: "Features", targets: ["Features"]),
         .library(name: "Detection", targets: ["Detection"]),
         .library(name: "Calibration", targets: ["Calibration"]),
+        .library(name: "Classification", targets: ["Classification"]),
     ],
     targets: [
         .target(name: "Tapper"),
@@ -32,11 +33,16 @@ let package = Package(
         .target(name: "Features", dependencies: ["DSP"]),
         .target(name: "Detection", dependencies: ["DSP", "Features"]),
         .target(name: "Calibration", dependencies: ["Features"]),
+        .target(name: "Classification", dependencies: ["Features", "Calibration"]),
         .testTarget(name: "TapperTests", dependencies: ["Tapper"]),
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),
         .testTarget(name: "FeaturesTests", dependencies: ["Features", "DSP"]),
         .testTarget(name: "DetectionTests", dependencies: ["Detection", "Features", "DSP"]),
         .testTarget(name: "CalibrationTests", dependencies: ["Calibration", "Features"]),
+        .testTarget(
+            name: "ClassificationTests",
+            dependencies: ["Classification", "Calibration", "Features"]
+        ),
     ]
 )

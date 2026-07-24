@@ -103,3 +103,22 @@ records what to build, the governing rationale, and acceptance criteria.
   ratio-based margin may generalize better across zones/users.
 - **Action:** during Phase 9, evaluate relative ambiguity metrics; adopt only
   with a spec update. The implementation keeps the documented absolute margin.
+
+## Classification / Runtime
+
+### BL-8 — Assemble RecognitionResult (needs Tap Quality §20)
+
+- **Status:** Open (blocked on Tap Quality subsystem).
+- **Origin:** Phase 4 (approved decision).
+- **What:** The canonical `RecognitionResult` (`DATA_MODELS` §9.5) requires a
+  `qualityScore` produced by the Tap Quality subsystem (`ALGORITHM` §20), which
+  is outside Phase 4 scope. Phase 4's classifier therefore produces
+  `ClassificationOutcome` (zone, status, Mahalanobis distance, confidence 0–100,
+  acceptance threshold, ambiguity info, timestamp) — every value it can
+  determine — but not a synthesized quality score.
+- **Action:** when Tap Quality (§20) is implemented, have the runtime/application
+  layer assemble `RecognitionResult` from the `ClassificationOutcome`, the tap
+  quality score, and the cooldown decision. Do **not** derive quality or a
+  `QualityRating` from confidence (undocumented behavior). `ClassificationResult`
+  / `ConfidenceModel` / `QualityRating` are introduced only if/when the docs
+  require them.
