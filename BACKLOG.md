@@ -122,3 +122,19 @@ records what to build, the governing rationale, and acceptance criteria.
   `QualityRating` from confidence (undocumented behavior). `ClassificationResult`
   / `ConfidenceModel` / `QualityRating` are introduced only if/when the docs
   require them.
+
+### BL-9 — Reconcile CalibrationProfile / metadata / CalibrationSample models
+
+- **Status:** Open (documentation task).
+- **Origin:** Phase 4, commit 5.
+- **What:** The implemented `CalibrationProfile` adds `normalization` and
+  `configuration` (holding λ) — required by approved decisions and consistent
+  with §7.6's stated responsibility ("provide runtime configuration for
+  recognition") — but the canonical `DATA_MODELS` §7.6 struct does not list them.
+  `CalibrationMetadata` §7.7 (`averageQuality`) and `CalibrationSample` §7.3
+  (`qualityScore`) both depend on the Tap Quality subsystem (§20) and are not
+  implemented in Phase 4 (no quality synthesized); the headless session works
+  with validated feature vectors directly.
+- **Action:** update `DATA_MODELS` §7.6 to include the normalization transform and
+  configuration; introduce `CalibrationMetadata` / `CalibrationSample` (with their
+  quality fields) when the Tap Quality subsystem (§20) is implemented.
