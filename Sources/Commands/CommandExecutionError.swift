@@ -27,6 +27,9 @@ public enum CommandExecutionError: Error, Equatable, CustomStringConvertible {
     /// A script failed to compile or execute.
     case scriptError(String)
 
+    /// Execution failed for a provider-specific reason.
+    case executionFailed(String)
+
     public var description: String {
         switch self {
         case .unsupportedType(let type):
@@ -43,6 +46,8 @@ public enum CommandExecutionError: Error, Equatable, CustomStringConvertible {
             return "Process exited with non-zero status \(code)."
         case .scriptError(let detail):
             return "Script error: \(detail)."
+        case .executionFailed(let detail):
+            return "Execution failed: \(detail)."
         }
     }
 }
