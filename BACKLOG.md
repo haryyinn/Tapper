@@ -138,3 +138,19 @@ records what to build, the governing rationale, and acceptance criteria.
 - **Action:** update `DATA_MODELS` §7.6 to include the normalization transform and
   configuration; introduce `CalibrationMetadata` / `CalibrationSample` (with their
   quality fields) when the Tap Quality subsystem (§20) is implemented.
+
+## Commands / Configuration
+
+### BL-10 — Reconcile Action / ZoneMapping with CommandBinding
+
+- **Status:** Open (documentation task — no code change required).
+- **Origin:** Phase 5 review.
+- **What:** `DATA_MODELS` §2.5 lists `Action` and `ZoneMapping` among the Command
+  Models (and `CLAUDE_CONTEXT` §4 repeats them as the `Commands/` module's owned
+  types), but `DATA_MODELS` §12 — authoritative for data structures — defines
+  `CommandBinding` as the canonical zone→command mapping and defines no `Action`
+  type. Phase 5 follows §12.
+- **Action:** reconcile the documentation so exactly one authoritative
+  command-mapping model exists: update `DATA_MODELS` §2.5 (and `CLAUDE_CONTEXT`
+  §4) to name `CommandBinding`, or specify `Action`/`ZoneMapping` in §12 if they
+  are genuinely distinct concepts. Phase 6 implements `CommandBinding` per §12.
