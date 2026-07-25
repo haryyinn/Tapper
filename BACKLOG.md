@@ -154,3 +154,23 @@ records what to build, the governing rationale, and acceptance criteria.
   command-mapping model exists: update `DATA_MODELS` §2.5 (and `CLAUDE_CONTEXT`
   §4) to name `CommandBinding`, or specify `Action`/`ZoneMapping` in §12 if they
   are genuinely distinct concepts. Phase 6 implements `CommandBinding` per §12.
+
+## Diagnostics
+
+### BL-11 — Diagnostics models deferred until Runtime / Tap Quality exist
+
+- **Status:** Open (blocked on owning subsystems).
+- **Origin:** Phase 7 review.
+- **What:** `DATA_MODELS` defines two diagnostics models that Phase 7 does not
+  implement, because each depends on values owned by later subsystems:
+  - `CalibrationReport` (§11.7) requires `averageQuality`, produced by the Tap
+    Quality subsystem (`ALGORITHM` §20).
+  - `DiagnosticsSnapshot` (§11.8) aggregates `EngineStatus` (§10.4) and
+    `RuntimeStatistics` (§10.6), both owned by the Runtime subsystem (§10).
+- **Constraint:** do **not** introduce placeholder values, provisional models, or
+  synthesized quality scores to make these types exist earlier.
+- **Action:** implement each model only once its owning subsystem exists —
+  `DiagnosticsSnapshot` when Runtime provides `EngineStatus`/`RuntimeStatistics`,
+  and `CalibrationReport` when Tap Quality (§20) provides quality scores. Related:
+  [[BL-8]] (RecognitionResult assembly), [[BL-9]] (calibration model
+  reconciliation).
