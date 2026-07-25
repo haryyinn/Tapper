@@ -229,3 +229,23 @@ interface, and Diagnostics does not depend on Runtime.
   `VALIDATION.md`). If live capture shows write stalls approaching the 5.33 ms
   callback budget, implement the lock-free single-producer/single-consumer ring
   and prove behavioural equivalence against the baseline tests.
+
+## Configuration (Phase 9 / calibration integration)
+
+### BL-13 — Persisted timestamps lose sub-second precision
+
+- **Status:** Open (minor; no effect on recognition).
+- **Origin:** Guided calibration integration.
+- **What:** `CalibrationProfile.createdAt` does not survive a persistence
+  round-trip exactly: ISO-8601 encoding writes whole seconds, so
+  `1785003272.300838` reloads as `1785003272.0`. `DATA_MODELS` §14.7 mandates
+  ISO-8601 for dates while §13.12 says serialization "shall preserve numerical
+  precision"; the two are in mild tension for timestamps.
+- **Verified impact:** none on behaviour. A field-by-field comparison confirmed
+  that mean vectors, covariance matrices, inverse covariances, thresholds, and
+  the normalization transform are **bit-identical** across the round-trip. Only
+  the metadata timestamp differs, and no recognition decision reads it.
+- **Action:** decide whether ISO-8601 with fractional seconds should be
+  specified for timestamps, or whether whole-second precision is intended.
+  Documentation decision; the implementation follows the documented format and
+  is not changed unilaterally.

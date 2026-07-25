@@ -50,14 +50,19 @@ struct ContentView: View {
 
 /// The application entry point.
 ///
-/// Launching with `--validate` runs the guided validation harness in the
-/// terminal instead of presenting the interface. Both modes run from the same
-/// signed bundle, so the harness inherits the app's permission identity.
+/// Launching with `--calibrate` or `--validate` runs that guided flow in the
+/// terminal instead of presenting the interface. Every mode runs from the same
+/// signed bundle, so each inherits the app's permission identity.
 @main
 enum TapperMain {
     static func main() {
-        if CommandLine.arguments.contains("--validate") {
-            ValidationCommand.run(arguments: Array(CommandLine.arguments.dropFirst()))
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.contains("--calibrate") {
+            CalibrationCommand.run(arguments: arguments)
+            return
+        }
+        if arguments.contains("--validate") {
+            ValidationCommand.run(arguments: arguments)
             return
         }
         TapperApplication.main()
