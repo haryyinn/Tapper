@@ -28,6 +28,7 @@ let package = Package(
         .library(name: "Commands", targets: ["Commands"]),
         .library(name: "Configuration", targets: ["Configuration"]),
         .library(name: "Diagnostics", targets: ["Diagnostics"]),
+        .library(name: "SystemIntegration", targets: ["SystemIntegration"]),
     ],
     targets: [
         .target(name: "Tapper"),
@@ -43,6 +44,7 @@ let package = Package(
             name: "Diagnostics",
             dependencies: ["Calibration", "Classification", "Configuration"]
         ),
+        .target(name: "SystemIntegration"),
         .testTarget(name: "TapperTests", dependencies: ["Tapper"]),
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),
@@ -63,5 +65,6 @@ let package = Package(
             name: "DiagnosticsTests",
             dependencies: ["Diagnostics", "Classification", "Calibration", "Configuration"]
         ),
+        .testTarget(name: "SystemIntegrationTests", dependencies: ["SystemIntegration"]),
     ]
 )
