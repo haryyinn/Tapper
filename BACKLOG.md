@@ -197,3 +197,35 @@ interface, and Diagnostics does not depend on Runtime.
 - **Action:** resolve ownership explicitly in the architecture documentation
   (for example, by assigning `DiagnosticsSnapshot` assembly to Runtime in
   `DATA_MODELS` §11.9), then implement it to match. Until then it stays deferred.
+
+## Audio (Phase 9 measurement)
+
+### BL-12 — Lock-free ring buffer: not justified by measurement (T1)
+
+- **Status:** Open (deferred on evidence; re-evaluate on hardware).
+- **Origin:** Phase 9 performance baseline.
+- **Background:** `RollingAudioBuffer.write` takes an `OSAllocatedUnfairLock`, so
+  in principle the real-time audio thread can block — which
+  `IMPLEMENTATION_RULES` §Threading forbids ("the audio capture thread SHALL
+  NEVER block"). The lock was an approved simplicity decision with a lock-free
+  redesign held in reserve.
+- **Measurement** (`./Scripts/benchmark.sh`, 10-core Apple Silicon):
+  - uncontended write: mean 0.005 ms, max 0.105 ms
+  - contended write, **realistic** reader (one analysis window per 20 ms hop,
+    matching the runtime): mean 0.005 ms, max **0.079 ms**
+  - contended write, **pathological** reader (spinning with no pause): max
+    **1383 ms**
+  - audio callback budget: 256 frames @ 48 kHz = **5.33 ms**
+- **Conclusion:** at the runtime's actual read cadence the write path stays ~68×
+  below the callback budget, so the lock does **not** materially affect the
+  documented performance or threading requirements. Per project decision the
+  lock-free redesign is **not** implemented: an optimization must demonstrate
+  measurable benefit, and there is none to demonstrate here.
+- **Residual risk (honest):** the pathological result shows the lock *can* block
+  the audio thread for an unbounded time under sufficient contention. This is a
+  latent risk rather than an observed problem, and it is unmeasured on real
+  hardware with a live audio callback.
+- **Action:** re-run the contention measurement during hardware validation (see
+  `VALIDATION.md`). If live capture shows write stalls approaching the 5.33 ms
+  callback budget, implement the lock-free single-producer/single-consumer ring
+  and prove behavioural equivalence against the baseline tests.
