@@ -13,7 +13,7 @@ import Foundation
 /// to the Tap Quality subsystem (`ALGORITHM` §20), which is outside Phase 4. The
 /// runtime/application layer assembles the canonical `RecognitionResult`
 /// (`DATA_MODELS` §9.5) from this outcome once Tap Quality exists (see backlog).
-public struct ClassificationOutcome: Sendable, Equatable {
+public struct ClassificationOutcome: Sendable, Equatable, Codable {
 
     /// The decision status. The classifier yields `success`, `ambiguous`, or
     /// `unknown`.
