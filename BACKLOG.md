@@ -170,7 +170,30 @@ records what to build, the governing rationale, and acceptance criteria.
 - **Constraint:** do **not** introduce placeholder values, provisional models, or
   synthesized quality scores to make these types exist earlier.
 - **Action:** implement each model only once its owning subsystem exists —
-  `DiagnosticsSnapshot` when Runtime provides `EngineStatus`/`RuntimeStatistics`,
-  and `CalibrationReport` when Tap Quality (§20) provides quality scores. Related:
-  [[BL-8]] (RecognitionResult assembly), [[BL-9]] (calibration model
-  reconciliation).
+  `DiagnosticsSnapshot` when the ownership conflict below is resolved in the
+  documentation, and `CalibrationReport` when Tap Quality (§20) provides quality
+  scores. Related: [[BL-8]] (RecognitionResult assembly), [[BL-9]] (calibration
+  model reconciliation).
+
+#### DiagnosticsSnapshot — unresolved ownership (documentation inconsistency)
+
+Phase 8 supplied the data `DiagnosticsSnapshot` needs, but the model remains
+**deferred because the documentation assigns its parts to two subsystems whose
+dependency direction is fixed**:
+
+- `DATA_MODELS` §11.9 assigns `DiagnosticsSnapshot` to the **Diagnostics**
+  subsystem.
+- `DATA_MODELS` §10.8 assigns `EngineStatus` and `RuntimeStatistics`, which the
+  snapshot aggregates, to the **Runtime** subsystem.
+- Runtime depends on Diagnostics for observational recording, so Diagnostics
+  cannot depend on Runtime without creating a circular dependency.
+
+This is a **documentation inconsistency, not an implementation deficiency**. Per
+project decision, no workaround or provisional implementation is introduced: no
+ownership is relocated, no shared module is created solely to break the cycle,
+Runtime's dependency on Diagnostics stays limited to the existing observational
+interface, and Diagnostics does not depend on Runtime.
+
+- **Action:** resolve ownership explicitly in the architecture documentation
+  (for example, by assigning `DiagnosticsSnapshot` assembly to Runtime in
+  `DATA_MODELS` §11.9), then implement it to match. Until then it stays deferred.
