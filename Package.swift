@@ -53,6 +53,13 @@ let package = Package(
                 "Commands", "Configuration", "Diagnostics", "SystemIntegration",
             ]
         ),
+        .executableTarget(
+            name: "TapperApp",
+            dependencies: [
+                "Runtime", "Audio", "Detection", "Classification", "Calibration",
+                "Commands", "Configuration", "Diagnostics", "SystemIntegration",
+            ]
+        ),
         .testTarget(name: "TapperTests", dependencies: ["Tapper"]),
         .testTarget(name: "AudioTests", dependencies: ["Audio"]),
         .testTarget(name: "DSPTests", dependencies: ["DSP"]),

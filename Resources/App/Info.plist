@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>Tapper</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.tapper.Tapper</string>
+    <key>CFBundleName</key>
+    <string>Tapper</string>
+    <key>CFBundleDisplayName</key>
+    <string>Tapper</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+
+    <!-- Required: shown when macOS prompts for microphone access. Tapper
+         recognizes taps from the built-in microphone; audio is processed
+         locally and never recorded, stored, or transmitted. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Tapper listens to the built-in microphone to recognize taps on the chassis. Audio is processed on this Mac and is never recorded, stored, or sent anywhere.</string>
+
+    <!-- Required when a mapped command runs an AppleScript that targets another
+         application. Requested by macOS at execution time, not at launch. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Tapper sends Apple Events only to run the AppleScript commands you have configured for a tap zone.</string>
+</dict>
+</plist>
