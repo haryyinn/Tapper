@@ -112,10 +112,18 @@ public struct ConfigurationStore {
 
     /// Validates and atomically saves command bindings.
     ///
-    /// - Parameter bindings: The bindings to persist.
-    /// - Throws: ``ConfigurationError`` if validation, encoding, or writing fails.
-    ///   Nothing is written when validation fails.
-    public func save(_ bindings: PersistedCommandBindings) throws {
+    /// Shell-command bindings require explicit user confirmation before they may
+    /// be saved (`TRD` §9); see ``BindingSaveGate``.
+    ///
+    /// - Parameters:
+    ///   - bindings: The bindings to persist.
+    ///   - userConfirmed: Whether the user explicitly confirmed this save.
+    ///     Required for any shell-command binding.
+    /// - Throws: ``ConfigurationError`` if confirmation is required but absent,
+    ///   or if validation, encoding, or writing fails. Nothing is written when
+    ///   any check fails.
+    public func save(_ bindings: PersistedCommandBindings, userConfirmed: Bool = false) throws {
+        try BindingSaveGate.checkSaveAllowed(bindings, userConfirmed: userConfirmed)
         try ConfigurationValidator.validate(bindings)
         let data = try encode(bindings)
         try store.write(data, to: FileName.commandBindings)
@@ -187,6 +195,27 @@ public struct ConfigurationStore {
         }
         try ConfigurationValidator.validate(stored.profile)
         return stored.profile
+    }
+
+    // MARK: Manifest
+
+    /// Loads the complete persistent state (`DATA_MODELS` §13.7).
+    ///
+    /// Preferences and bindings recover to defaults if unusable; the calibration
+    /// profile does not. A manifest therefore exists only once calibration has
+    /// been completed and stored.
+    ///
+    /// - Returns: The assembled manifest, or `nil` if no calibration profile is
+    ///   stored (calibration required).
+    /// - Throws: ``ConfigurationError`` if a stored calibration profile exists
+    ///   but cannot be loaded.
+    public func loadManifest() throws -> PersistenceManifest? {
+        guard let profile = try loadCalibrationProfile() else { return nil }
+        return PersistenceManifest(
+            calibrationProfile: profile,
+            commandBindings: loadCommandBindings().value,
+            userPreferences: loadPreferences().value
+        )
     }
 
     // MARK: Restore defaults
