@@ -41,49 +41,60 @@ hardware:
 
 ## Procedure
 
-### 1. Baseline the machine
+### 1. Build the app and baseline the machine
 
 ```bash
 ./Scripts/verify.sh
 ./Scripts/benchmark.sh
+./Scripts/build-app.sh
 ```
 
-Record the benchmark output. It establishes compute latency on that machine and
-is the reference for any later tuning.
+Record the benchmark output — it establishes compute latency on that machine and
+is the reference for any later tuning. `build-app.sh` produces
+`build/Tapper.app`, an ad-hoc signed bundle; macOS attributes microphone and
+Accessibility permissions to the bundle, so validation must run from it.
 
-### 2. Calibrate
+### 2. Grant microphone access
 
-Run calibration and collect the documented 20 accepted samples per zone
-(`ALGORITHM` §27.10), tapping each zone the way it would be tapped in normal
-use. Note how many attempts were rejected — the calibration success rate target
-is ≥ 98% (`ALGORITHM` §24.5).
+```bash
+open build/Tapper.app
+```
 
-### 3. Measure accuracy
+Use **Request Microphone Access**, then approve the prompt. The window also
+shows the current state, microphone availability, and whether a calibration
+profile is loaded.
 
-For each of the four zones, perform a counted series of deliberate taps (100 per
-zone gives a usable estimate at this stage) and record:
+### 3. Calibrate
 
-- taps correctly recognized as that zone,
-- taps recognized as a different zone,
-- taps not recognized at all (false negatives).
+```bash
+build/Tapper.app/Contents/MacOS/Tapper --calibrate
+```
 
-Per-zone accuracy is `correct / total`. Overall accuracy is the total across all
-four zones. Compare against ≥ 80% (prototype gate) before tuning anything.
+The guided flow explains the procedure, names each zone, counts down before every
+tap, and collects the documented 20 accepted samples per zone
+(`ALGORITHM` §27.10). Rejected taps are retried automatically; the per-zone
+summary reports how many retries were needed, which is the input to the
+calibration success-rate target of ≥ 98% (`ALGORITHM` §24.5).
 
-### 4. Measure false positives
+On success the profile is persisted and the runtime state is printed. Validation
+is then usable with no further setup.
 
-With recognition running and **no** deliberate taps, perform each of these for a
-fixed interval (5 minutes each is adequate) and count any recognition:
+### 4. Measure accuracy and false positives
 
-- typing on the keyboard,
-- normal speech near the machine,
-- trackpad clicks,
-- placing objects on the desk, moving the laptop,
-- connecting and disconnecting the charger, closing the lid.
+```bash
+build/Tapper.app/Contents/MacOS/Tapper --validate --reps 25 --idle 300
+```
 
-False positive rate is `recognitions / opportunities`; the target is < 1%
-(`ALGORITHM` §24.6). Note that minimizing false positives takes priority over
-sensitivity (§24.6).
+The harness prompts for each tap, labels the expected zone automatically, and
+records the detected zone, classification outcome, confidence, distance, and
+latency — so no manual counting is required. The idle phase records
+false-positive opportunities: during it, do **not** tap deliberately, but do
+type, speak, use the trackpad, move the laptop, and connect the charger.
+
+Results are written to `~/TapperValidation/` as CSV, JSON, and a report that
+compares each measurement against its documented target. `--reps 100` gives a
+stronger estimate; note that minimizing false positives takes priority over
+sensitivity (`ALGORITHM` §24.6).
 
 ### 5. Measure sustained CPU and memory
 
