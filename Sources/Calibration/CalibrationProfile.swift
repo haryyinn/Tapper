@@ -13,7 +13,7 @@ import Foundation
 ///   `configuration` fields, and its `metadata.averageQuality` depends on the
 ///   Tap Quality subsystem (§20). See backlog BL-9 for the documentation
 ///   reconciliation; no quality value is synthesized here.
-public struct CalibrationProfile: Sendable, Equatable {
+public struct CalibrationProfile: Sendable, Equatable, Codable {
 
     /// Unique profile identifier.
     public let id: UUID

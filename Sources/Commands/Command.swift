@@ -14,7 +14,7 @@ import Foundation
 ///
 /// Version 1 providers do not read ``parameters``; ordered arguments, if needed
 /// later, will extend the model rather than overload the dictionary.
-public struct Command: Sendable, Equatable {
+public struct Command: Sendable, Equatable, Codable {
 
     /// Unique command identifier.
     public let id: UUID

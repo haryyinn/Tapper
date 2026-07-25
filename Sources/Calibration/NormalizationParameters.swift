@@ -5,7 +5,7 @@
 /// calibration and runtime classification. Bringing features onto a common
 /// unit-variance scale is what makes the fixed regularization coefficient λ a
 /// principled floor. Immutable.
-public struct NormalizationParameters: Sendable, Equatable {
+public struct NormalizationParameters: Sendable, Equatable, Codable {
 
     /// The per-feature mean.
     public let means: [Double]

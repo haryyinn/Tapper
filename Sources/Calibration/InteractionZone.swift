@@ -5,7 +5,7 @@
 /// bottomRight`; ``calibratable`` exposes exactly that order, which also serves
 /// as the deterministic tie-break order (`ALGORITHM` §18.11). `unknown`
 /// indicates that no valid classification could be produced.
-public enum InteractionZone: Sendable, Equatable, CaseIterable {
+public enum InteractionZone: String, Sendable, Equatable, CaseIterable, Codable {
     case topLeft
     case topRight
     case bottomLeft

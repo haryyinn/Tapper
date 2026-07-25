@@ -1,7 +1,7 @@
 /// The centroid of a zone's calibration feature vectors (`DATA_MODELS` §8.3).
 ///
 /// Values follow the canonical `FeatureVector` ordering. Immutable.
-public struct MeanVector: Sendable, Equatable {
+public struct MeanVector: Sendable, Equatable, Codable {
 
     /// The mean value of each feature.
     public let values: [Double]
@@ -17,7 +17,7 @@ public struct MeanVector: Sendable, Equatable {
 /// A square, symmetric feature covariance matrix (`DATA_MODELS` §8.4).
 ///
 /// Stored row-major. Immutable.
-public struct CovarianceMatrix: Sendable, Equatable {
+public struct CovarianceMatrix: Sendable, Equatable, Codable {
 
     /// The matrix rows.
     public let values: [[Double]]
@@ -37,7 +37,7 @@ public struct CovarianceMatrix: Sendable, Equatable {
 ///
 /// Computed once during calibration and reused at runtime; never recomputed
 /// during recognition. Immutable.
-public struct InverseCovarianceMatrix: Sendable, Equatable {
+public struct InverseCovarianceMatrix: Sendable, Equatable, Codable {
 
     /// The inverse matrix rows, row-major.
     public let values: [[Double]]
@@ -56,7 +56,7 @@ public struct InverseCovarianceMatrix: Sendable, Equatable {
 /// The acceptance criteria for a statistical match (`DATA_MODELS` §8.6).
 ///
 /// Immutable.
-public struct ThresholdModel: Sendable, Equatable {
+public struct ThresholdModel: Sendable, Equatable, Codable {
 
     /// Maximum Mahalanobis distance for acceptance (`ALGORITHM` §17.17).
     public let acceptanceThreshold: Double

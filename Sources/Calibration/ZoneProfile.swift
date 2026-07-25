@@ -3,7 +3,7 @@
 ///
 /// Consumed by the classification engine at runtime. Immutable: a zone profile
 /// is generated once from calibration data and never adapted in place.
-public struct ZoneProfile: Sendable, Equatable {
+public struct ZoneProfile: Sendable, Equatable, Codable {
 
     /// The calibrated zone this profile represents.
     public let zone: InteractionZone

@@ -4,7 +4,7 @@
 /// Each case is handled by exactly one execution provider (`DECISIONS` ADR-012),
 /// except ``custom``, which has no Version 1 provider and exists for future
 /// extensibility.
-public enum CommandType: Sendable, Equatable, Hashable {
+public enum CommandType: String, Sendable, Equatable, Hashable, Codable {
     case keyboardShortcut
     case shellCommand
     case appleScript

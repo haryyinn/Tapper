@@ -2,7 +2,7 @@
 ///
 /// Stored within the calibration profile so a profile records the exact
 /// parameters it was built with (including the regularization coefficient λ).
-public struct CalibrationConfiguration: Sendable, Equatable {
+public struct CalibrationConfiguration: Sendable, Equatable, Codable {
 
     /// Accepted samples collected per zone (`ALGORITHM` §27.10: 20).
     public let samplesPerZone: Int
