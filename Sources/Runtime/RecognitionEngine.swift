@@ -32,7 +32,6 @@ public final class RecognitionEngine: @unchecked Sendable {
     private struct State {
         var runtime: RecognitionRuntime
         var isRunning: Bool
-        var consumedSampleCount: Int
         var observer: FrameObserver?
     }
 
@@ -55,8 +54,7 @@ public final class RecognitionEngine: @unchecked Sendable {
         self.pollInterval = pollInterval
         self.queue = DispatchQueue(label: "com.tapper.recognition-worker", qos: .userInitiated)
         self.state = OSAllocatedUnfairLock(
-            uncheckedState: State(
-                runtime: runtime, isRunning: false, consumedSampleCount: 0, observer: nil))
+            uncheckedState: State(runtime: runtime, isRunning: false, observer: nil))
     }
 
     /// Whether the worker is running.
@@ -73,15 +71,13 @@ public final class RecognitionEngine: @unchecked Sendable {
 
     /// Starts the recognition worker.
     ///
-    /// Audio capture is started by the caller; the engine only consumes what the
-    /// ring buffer already contains.
+    /// Audio capture is started by the caller. The first polls read whatever the
+    /// ring already holds, so audio captured just before starting contributes to
+    /// the ambient noise-floor estimate rather than being discarded.
     public func start() {
         let shouldStart = state.withLockUnchecked { state -> Bool in
             guard !state.isRunning else { return false }
             state.isRunning = true
-            // Begin from the current write position so startup does not replay
-            // audio captured before the engine was started.
-            state.consumedSampleCount = 0
             return true
         }
         guard shouldStart else { return }
@@ -101,7 +97,10 @@ public final class RecognitionEngine: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + pollInterval) { [weak self] in self?.pump() }
     }
 
-    /// Consumes whole hops from the ring buffer, in order.
+    /// Reads the most recent analysis window and processes it.
+    ///
+    /// Polling once per hop yields the documented 50% window overlap
+    /// (`ALGORITHM` §11.3) at the Version 1 settings.
     private func processAvailableFrames() {
         let available = buffer.availableSampleCount
         guard available >= extractor.frameSize else { return }
