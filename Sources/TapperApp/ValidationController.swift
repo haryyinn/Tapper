@@ -1,0 +1,293 @@
+import Audio
+import Calibration
+import Classification
+import Commands
+import Configuration
+import Dispatch
+import Foundation
+import Runtime
+
+/// Drives a guided validation run for the user interface.
+///
+/// Orchestration only: it starts capture and the recognition engine, prompts for
+/// each labelled tap, records what the engine reported, and exports the results
+/// using the existing ``ValidationExport``. It measures and never tunes; no
+/// detection constant is read or written here.
+@MainActor
+final class ValidationController: ObservableObject {
+
+    enum Phase: Equatable {
+        case idle
+        case countdown(zone: InteractionZone, remaining: Int)
+        case listening(zone: InteractionZone, trial: Int, of: Int)
+        case idleRecording(secondsRemaining: Int)
+        case finished(path: String)
+        case failed(String)
+    }
+
+    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var message = "Not started."
+    @Published private(set) var isRunning = false
+    @Published private(set) var completedTrials = 0
+    @Published private(set) var report: String?
+
+    /// Taps collected per zone.
+    var repetitions = 25
+
+    /// Seconds of idle recording, each counted as one false-positive opportunity.
+    var idleSeconds = 60
+
+    private let composition: AppComposition
+    private let queue = DispatchQueue(label: "com.tapper.validation-ui", qos: .userInitiated)
+    private var captureSource: AVAudioEngineCaptureSource?
+    private var engine: RecognitionEngine?
+    private let cancellation = CancellationFlag()
+
+    init(composition: AppComposition) {
+        self.composition = composition
+    }
+
+    /// Starts a validation run, if a calibration profile is available.
+    func start() {
+        guard !isRunning else { return }
+        guard composition.capabilities().allowsRecognition else {
+            message = "Microphone access is required. Use Request Microphone Access first."
+            return
+        }
+
+        let profile: CalibrationProfile
+        switch composition.evaluateStartup() {
+        case .ready(let loaded):
+            profile = loaded
+        case .blocked(let blocker):
+            message = CompositionFailure.startupBlocked(blocker).description
+            return
+        }
+
+        // Commands are not executed during validation: the run measures
+        // recognition, and firing real commands would have side effects.
+        let engine: RecognitionEngine
+        let source = composition.makeCaptureSource()
+        do {
+            engine = try composition.makeEngine(
+                profile: profile, executor: CommandExecutor(providers: []))
+            try source.start()
+        } catch {
+            message = "Could not start validation: \(error)"
+            return
+        }
+        engine.start()
+
+        let recorder = TrialRecorder()
+        engine.setFrameObserver { outcome, timestamp in
+            recorder.observe(outcome: outcome, at: timestamp)
+        }
+
+        self.engine = engine
+        self.captureSource = source
+        cancellation.reset()
+        isRunning = true
+        completedTrials = 0
+        report = nil
+        message = "Starting..."
+
+        let reps = repetitions
+        let idle = idleSeconds
+        let flag = cancellation
+        queue.async { [weak self] in
+            self?.run(recorder: recorder, repetitions: reps, idleSeconds: idle, cancellation: flag)
+        }
+    }
+
+    /// Stops the run without exporting.
+    func cancel() {
+        cancellation.cancel()
+        teardown()
+        isRunning = false
+        phase = .idle
+        message = "Validation cancelled. Nothing was exported."
+    }
+
+    // MARK: Run loop (background queue)
+
+    private nonisolated func run(
+        recorder: TrialRecorder, repetitions: Int, idleSeconds: Int,
+        cancellation: CancellationFlag
+    ) {
+        var trials: [ValidationTrial] = []
+        var index = 0
+        let startedAt = Date()
+
+        for zone in InteractionZone.calibratable {
+            for repetition in 1...max(1, repetitions) {
+                if cancellation.isCancelled { return }
+                for remaining in stride(from: 3, through: 1, by: -1) {
+                    publish(.countdown(zone: zone, remaining: remaining), "Get ready.")
+                    Thread.sleep(forTimeInterval: 1.0)
+                }
+                publish(
+                    .listening(zone: zone, trial: repetition, of: repetitions),
+                    "Tap \(zone.rawValue) now.")
+                recorder.reset()
+                Thread.sleep(forTimeInterval: 0.8)
+                index += 1
+                let trial = recorder.makeTrial(index: index, expectedZone: zone)
+                trials.append(trial)
+                note(trial.outcome, completed: index)
+            }
+        }
+
+        for second in stride(from: max(1, idleSeconds), through: 1, by: -1) {
+            if cancellation.isCancelled { return }
+            publish(.idleRecording(secondsRemaining: second), "Do not tap. Type, speak, move.")
+            recorder.reset()
+            Thread.sleep(forTimeInterval: 1.0)
+            index += 1
+            trials.append(recorder.makeTrial(index: index, expectedZone: nil))
+        }
+
+        export(
+            ValidationRun(
+                startedAt: startedAt, completedAt: Date(), appVersion: validationAppVersion,
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString, trials: trials))
+    }
+
+    private nonisolated func export(_ run: ValidationRun) {
+        let summary = ValidationSummary.make(from: run.trials)
+        let text = ValidationExport.report(run, summary: summary)
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("TapperValidation", isDirectory: true)
+
+        var resultPath = directory.path
+        var failure: String?
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            let stamp = ISO8601DateFormatter().string(from: run.completedAt)
+                .replacingOccurrences(of: ":", with: "-")
+            let store = AtomicFileStore(directory: directory)
+            try store.write(Data(ValidationExport.csv(run).utf8), to: "validation-\(stamp).csv")
+            try store.write(try ValidationExport.json(run), to: "validation-\(stamp).json")
+            try store.write(Data(text.utf8), to: "validation-\(stamp).txt")
+            resultPath = directory.appendingPathComponent("validation-\(stamp).*").path
+        } catch {
+            failure = String(describing: error)
+        }
+
+        Task { @MainActor in
+            self.report = text
+            if let failure {
+                self.phase = .failed("export failed")
+                self.message = "Validation finished but export failed: \(failure)"
+            } else {
+                self.phase = .finished(path: resultPath)
+                self.message = "Validation complete. Results written to \(resultPath)"
+            }
+            self.teardown()
+            self.isRunning = false
+        }
+    }
+
+    private nonisolated func publish(_ phase: Phase, _ message: String) {
+        Task { @MainActor in
+            self.phase = phase
+            self.message = message
+        }
+    }
+
+    private nonisolated func note(_ outcome: String, completed: Int) {
+        Task { @MainActor in
+            self.completedTrials = completed
+            self.message = "Recorded: \(outcome)"
+        }
+    }
+
+    private func teardown() {
+        engine?.stop()
+        captureSource?.stop()
+        engine = nil
+        captureSource = nil
+    }
+
+}
+
+/// The app version recorded in exported validation runs.
+private let validationAppVersion = "0.1.0-validation"
+
+/// Collects the frames observed during one trial window.
+///
+/// The most decisive outcome wins: a recognized zone outranks a rejection, which
+/// outranks "no candidate".
+final class TrialRecorder: @unchecked Sendable {
+
+    private let lock = NSLock()
+    private var observations: [(outcome: FrameOutcome, latency: Double)] = []
+    private var windowStart = Date()
+
+    func reset() {
+        lock.lock()
+        observations.removeAll()
+        windowStart = Date()
+        lock.unlock()
+    }
+
+    func observe(outcome: FrameOutcome, at timestamp: Date) {
+        lock.lock()
+        observations.append((outcome, timestamp.timeIntervalSince(windowStart) * 1000))
+        lock.unlock()
+    }
+
+    func makeTrial(index: Int, expectedZone: InteractionZone?) -> ValidationTrial {
+        lock.lock()
+        let observed = observations
+        lock.unlock()
+
+        var detectedZone: String?
+        var status: String?
+        var confidence: Double?
+        var distance: Double?
+        var outcomeLabel = "noCandidate"
+        var latency = 0.0
+
+        for entry in observed {
+            switch entry.outcome {
+            case .noCandidate, .notListening:
+                continue
+            case .candidateRejected(let reason):
+                if outcomeLabel == "noCandidate" {
+                    outcomeLabel = "rejected(\(reason))"
+                    latency = entry.latency
+                }
+            case .notRecognized(let classification):
+                outcomeLabel = "notRecognized(\(classification.status))"
+                status = String(describing: classification.status)
+                confidence = classification.confidence
+                distance = classification.distance
+                latency = entry.latency
+            case .suppressedByCooldown(let classification), .noBinding(let classification):
+                detectedZone = classification.zone.rawValue
+                status = String(describing: classification.status)
+                confidence = classification.confidence
+                distance = classification.distance
+                outcomeLabel = "recognized(\(classification.zone.rawValue))"
+                latency = entry.latency
+            case .executed(let classification, _):
+                detectedZone = classification.zone.rawValue
+                status = String(describing: classification.status)
+                confidence = classification.confidence
+                distance = classification.distance
+                outcomeLabel = "executed(\(classification.zone.rawValue))"
+                latency = entry.latency
+            }
+        }
+
+        let succeeded =
+            expectedZone.map { detectedZone == $0.rawValue } ?? (detectedZone == nil)
+
+        return ValidationTrial(
+            index: index, expectedZone: expectedZone?.rawValue, detectedZone: detectedZone,
+            status: status, confidence: confidence, distance: distance,
+            latencyMilliseconds: latency, outcome: outcomeLabel, succeeded: succeeded,
+            timestamp: Date())
+    }
+}
