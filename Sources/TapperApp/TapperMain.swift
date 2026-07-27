@@ -47,9 +47,9 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            RecognitionView().tabItem { Text("Recognition") }
-            CalibrationView().tabItem { Text("Calibration") }
-            ValidationView().tabItem { Text("Validation") }
+            RecognitionView(controller: model.engine).tabItem { Text("Recognition") }
+            CalibrationView(controller: model.calibration).tabItem { Text("Calibration") }
+            ValidationView(controller: model.validation).tabItem { Text("Validation") }
         }
         .frame(minWidth: 460, minHeight: 380)
         .padding(12)
@@ -59,14 +59,16 @@ struct RootView: View {
 /// Start/stop the recognition engine and request microphone access.
 struct RecognitionView: View {
 
-    @EnvironmentObject private var model: AppModel
+    /// Observed directly: a nested `ObservableObject` reached through another
+    /// `ObservableObject` does not propagate its changes to the view.
+    @ObservedObject var controller: EngineController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Recognition").font(.title3).bold()
-            Text(model.engine.status).font(.callout).foregroundStyle(.secondary)
+            Text(controller.status).font(.callout).foregroundStyle(.secondary)
 
-            if let status = model.engine.engineStatus {
+            if let status = controller.engineStatus {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
                     GridRow {
                         Text("State").foregroundStyle(.secondary)
@@ -86,10 +88,10 @@ struct RecognitionView: View {
 
             HStack {
                 Button("Request Microphone Access") {
-                    Task { await model.engine.requestPermissions() }
+                    Task { await controller.requestPermissions() }
                 }
-                Button(model.engine.isRunning ? "Stop" : "Start") {
-                    model.engine.isRunning ? model.engine.stop() : model.engine.start()
+                Button(controller.isRunning ? "Stop" : "Start") {
+                    controller.isRunning ? controller.stop() : controller.start()
                 }
                 .keyboardShortcut(.defaultAction)
             }
@@ -97,20 +99,22 @@ struct RecognitionView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
-        .task { model.engine.refreshStatus() }
+        .task { controller.refreshStatus() }
     }
 }
 
 /// Guided calibration.
 struct CalibrationView: View {
 
-    @EnvironmentObject private var model: AppModel
+    /// Observed directly: a nested `ObservableObject` reached through another
+    /// `ObservableObject` does not propagate its changes to the view.
+    @ObservedObject var controller: CalibrationController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Calibration").font(.title3).bold()
             Text(
-                "Tap each zone \(model.calibration.samplesPerZone) times. "
+                "Tap each zone \(controller.samplesPerZone) times. "
                     + "A countdown precedes every tap; rejected taps are retried automatically."
             )
             .font(.caption).foregroundStyle(.secondary)
@@ -118,28 +122,28 @@ struct CalibrationView: View {
             promptView
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
-                ForEach(model.calibration.zones, id: \.rawValue) { zone in
+                ForEach(controller.zones, id: \.rawValue) { zone in
                     GridRow {
                         Text(zone.rawValue).foregroundStyle(.secondary)
                         Text(
-                            "\(model.calibration.accepted[zone] ?? 0)"
-                                + "/\(model.calibration.samplesPerZone)")
+                            "\(controller.accepted[zone] ?? 0)"
+                                + "/\(controller.samplesPerZone)")
                     }
                 }
             }
             .font(.caption)
 
-            Text(model.calibration.message).font(.callout)
-            if model.calibration.retries > 0 {
-                Text("retries: \(model.calibration.retries)").font(.caption)
+            Text(controller.message).font(.callout)
+            if controller.retries > 0 {
+                Text("retries: \(controller.retries)").font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             HStack {
-                Button("Start Calibration") { model.calibration.start() }
-                    .disabled(model.calibration.isRunning)
-                Button("Cancel") { model.calibration.cancel() }
-                    .disabled(!model.calibration.isRunning)
+                Button("Start Calibration") { controller.start() }
+                    .disabled(controller.isRunning)
+                Button("Cancel") { controller.cancel() }
+                    .disabled(!controller.isRunning)
             }
             Spacer()
         }
@@ -148,7 +152,7 @@ struct CalibrationView: View {
     }
 
     @ViewBuilder private var promptView: some View {
-        switch model.calibration.phase {
+        switch controller.phase {
         case .countdown(let zone, let remaining):
             Text("Tap \(zone.rawValue) in \(remaining)…").font(.title2).bold()
         case .listening(let zone):
@@ -168,7 +172,9 @@ struct CalibrationView: View {
 /// Guided validation.
 struct ValidationView: View {
 
-    @EnvironmentObject private var model: AppModel
+    /// Observed directly: a nested `ObservableObject` reached through another
+    /// `ObservableObject` does not propagate its changes to the view.
+    @ObservedObject var controller: ValidationController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -181,18 +187,18 @@ struct ValidationView: View {
 
             promptView
 
-            Text(model.validation.message).font(.callout)
-            Text("trials recorded: \(model.validation.completedTrials)").font(.caption)
+            Text(controller.message).font(.callout)
+            Text("trials recorded: \(controller.completedTrials)").font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack {
-                Button("Start Validation") { model.validation.start() }
-                    .disabled(model.validation.isRunning)
-                Button("Cancel") { model.validation.cancel() }
-                    .disabled(!model.validation.isRunning)
+                Button("Start Validation") { controller.start() }
+                    .disabled(controller.isRunning)
+                Button("Cancel") { controller.cancel() }
+                    .disabled(!controller.isRunning)
             }
 
-            if let report = model.validation.report {
+            if let report = controller.report {
                 ScrollView {
                     Text(report).font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -206,7 +212,7 @@ struct ValidationView: View {
     }
 
     @ViewBuilder private var promptView: some View {
-        switch model.validation.phase {
+        switch controller.phase {
         case .countdown(let zone, let remaining):
             Text("Tap \(zone.rawValue) in \(remaining)…").font(.title2).bold()
         case .listening(let zone, let trial, let total):

@@ -52,17 +52,25 @@ final class CalibrationController: ObservableObject {
 
     /// Starts guided calibration.
     func start() {
-        guard !isRunning else { return }
+        AppLog.calibration("Button pressed")
+        guard !isRunning else {
+            AppLog.calibration("Ignored: already running")
+            return
+        }
         guard composition.capabilities().allowsRecognition else {
+            AppLog.calibration(
+                "STOPPED: microphone not authorised (\(composition.microphoneStatus().rawValue))")
             message = "Microphone access is required. Use Request Microphone Access first."
             return
         }
+        AppLog.calibration("Microphone authorised")
 
         let configuration = CalibrationConfiguration.v1
         let coordinator: CalibrationCoordinator
         let source = composition.makeCaptureSource()
         do {
             try source.start()
+            AppLog.calibration("Audio capture started")
             coordinator = CalibrationCoordinator(
                 session: CalibrationSession(
                     configuration: configuration,
@@ -75,9 +83,11 @@ final class CalibrationController: ObservableObject {
                     log: composition.diagnosticsLog,
                     preferences: composition.configuration.loadPreferences().value))
         } catch {
+            AppLog.calibration("STOPPED: \(error)")
             message = "Could not start calibration: \(error)"
             return
         }
+        AppLog.calibration("Calibration session created")
 
         captureSource = source
         cancellation.reset()
@@ -91,8 +101,12 @@ final class CalibrationController: ObservableObject {
         let flag = cancellation
         queue.async { [weak self] in
             Thread.sleep(forTimeInterval: 1.5)
-            guard !flag.isCancelled else { return }
+            guard !flag.isCancelled else {
+                AppLog.calibration("STOPPED: cancelled during settle")
+                return
+            }
             box.value.begin()
+            AppLog.calibration("Session begin -> state \(box.value.state)")
             self?.collect(using: box, configuration: configuration, cancellation: flag)
         }
     }
@@ -122,16 +136,23 @@ final class CalibrationController: ObservableObject {
                     Thread.sleep(forTimeInterval: 1.0)
                 }
                 publish(.listening(zone: zone), "Tap now.")
+                AppLog.calibration("Waiting for tap: \(zone.rawValue)")
 
                 switch box.value.captureSample(timeout: 6.0) {
                 case .accepted(_, let acceptedInZone):
                     collected = acceptedInZone
+                    AppLog.calibration(
+                        "Sample accepted: \(zone.rawValue) \(acceptedInZone)/\(configuration.samplesPerZone)"
+                    )
                     record(zone: zone, accepted: acceptedInZone, note: nil)
                 case .rejected(let reason):
+                    AppLog.calibration("Sample rejected: \(reason)")
                     record(zone: zone, accepted: collected, note: "Not usable (\(reason)) — retry.")
                 case .timedOut:
+                    AppLog.calibration("No tap detected within timeout")
                     record(zone: zone, accepted: collected, note: "No tap detected — retry.")
                 case .notCollecting:
+                    AppLog.calibration("STOPPED: session not collecting")
                     return
                 }
             }
@@ -140,12 +161,14 @@ final class CalibrationController: ObservableObject {
     }
 
     private nonisolated func generate(using box: UncheckedBox<CalibrationCoordinator>) {
+        AppLog.calibration("All zones collected — generating profile")
         let result = box.value.generateProfile()
         Task { @MainActor in
             switch result {
             case .success(let profile):
                 do {
                     try self.composition.configuration.save(profile)
+                    AppLog.calibration("Profile saved (\(profile.zones.count) zones)")
                     self.phase = .finished(zones: profile.zones.count)
                     self.message =
                         "Calibration complete. Profile saved for \(profile.zones.count) zones."
@@ -154,6 +177,7 @@ final class CalibrationController: ObservableObject {
                     self.message = "Calibration succeeded but the profile could not be saved."
                 }
             case .failure(let error):
+                AppLog.calibration("FAILED: \(error)")
                 self.phase = .failed(String(describing: error))
                 self.message = "Calibration failed: \(Self.describe(error)) Nothing was saved."
             }

@@ -49,7 +49,11 @@ final class ValidationController: ObservableObject {
 
     /// Starts a validation run, if a calibration profile is available.
     func start() {
-        guard !isRunning else { return }
+        AppLog.validation("Button pressed")
+        guard !isRunning else {
+            AppLog.validation("Ignored: already running")
+            return
+        }
         guard composition.capabilities().allowsRecognition else {
             message = "Microphone access is required. Use Request Microphone Access first."
             return
@@ -60,9 +64,11 @@ final class ValidationController: ObservableObject {
         case .ready(let loaded):
             profile = loaded
         case .blocked(let blocker):
+            AppLog.validation("STOPPED: \(blocker)")
             message = CompositionFailure.startupBlocked(blocker).description
             return
         }
+        AppLog.validation("Calibration profile loaded")
 
         // Commands are not executed during validation: the run measures
         // recognition, and firing real commands would have side effects.
@@ -77,6 +83,7 @@ final class ValidationController: ObservableObject {
             return
         }
         engine.start()
+        AppLog.validation("Audio capture and recognition engine started")
 
         let recorder = TrialRecorder()
         engine.setFrameObserver { outcome, timestamp in
