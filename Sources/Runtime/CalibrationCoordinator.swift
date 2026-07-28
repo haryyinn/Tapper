@@ -47,6 +47,7 @@ public final class CalibrationCoordinator {
 
     private var session: CalibrationSession
     private var detector: TapDetector
+    private var nonDetectionSamples: [NonDetectionSample] = []
 
     /// The current calibration state, as reported by the calibration engine.
     public var state: CalibrationState { session.state }
@@ -54,6 +55,12 @@ public final class CalibrationCoordinator {
     /// The number of samples required per zone, from the calibration
     /// configuration.
     public let samplesPerZone: Int
+
+    /// Aggregate statistics over frames that never became candidates, or `nil`
+    /// if none were observed. Diagnostic only.
+    public var nonDetectionStatistics: NonDetectionStatistics? {
+        NonDetectionStatistics.make(from: nonDetectionSamples)
+    }
 
     /// Creates a calibration coordinator.
     ///
@@ -82,10 +89,16 @@ public final class CalibrationCoordinator {
         self.extractor = extractor
         self.pollInterval = pollInterval
         self.logger = logger
+        // Instrumentation only: records why frames failed detection without
+        // altering the decision.
+        self.detector.nonDetectionObserver = { [weak self] sample in
+            self?.nonDetectionSamples.append(sample)
+        }
     }
 
     /// Starts collection at the first canonical zone.
     public func begin() {
+        nonDetectionSamples.removeAll()
         session.begin()
         logger?.record(.info, category: .calibration, "calibration started", at: Date())
     }

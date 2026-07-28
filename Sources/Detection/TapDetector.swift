@@ -33,6 +33,12 @@ public struct TapDetector {
     private let pipeline: FeatureExtractionPipeline
     private var noiseFloor: NoiseFloorEstimator
 
+    /// Optional observer for frames that do not become candidates.
+    ///
+    /// Instrumentation only. When `nil` — the default — no extra work is done
+    /// and the detection path is exactly as before.
+    public var nonDetectionObserver: ((NonDetectionSample) -> Void)?
+
     /// The current ambient noise-floor RMS estimate, or `nil` before any
     /// non-candidate frame has been observed. Exposed for diagnostics.
     public var currentNoiseFloorRMS: Double? { noiseFloor.currentRMS }
@@ -79,6 +85,11 @@ public struct TapDetector {
         try TapDetector(frameSize: 1920, fftSize: 2048, sampleRate: 48_000, filter: .v1)
     }
 
+    /// The largest absolute sample value, used for telemetry only.
+    private func peakMagnitude(of signal: [Double]) -> Double {
+        signal.reduce(0.0) { Swift.max($0, abs($1)) }
+    }
+
     /// Processes one analysis frame.
     ///
     /// - Parameters:
@@ -93,6 +104,14 @@ public struct TapDetector {
 
         guard detector.detectsCandidate(inFiltered: filtered) else {
             noiseFloor.update(withFrameRMS: TimeDomainFeatures.rmsEnergy(of: filtered))
+            // Telemetry only; the decision above has already been made and is
+            // unaffected. The peaks are computed solely when observed.
+            if let observe = nonDetectionObserver {
+                observe(
+                    NonDetectionSample(
+                        prefilterPeak: peakMagnitude(of: dcRemoved),
+                        filteredPeak: peakMagnitude(of: filtered)))
+            }
             return .noCandidate
         }
 

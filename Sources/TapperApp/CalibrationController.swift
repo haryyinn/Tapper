@@ -38,6 +38,9 @@ final class CalibrationController: ObservableObject {
     /// identifies which criterion rejects natural taps; it is reported, never
     /// acted on automatically.
     @Published private(set) var rejectionCounts: [String: Int] = [:]
+
+    /// Statistics over frames that never reached the detection gate.
+    @Published private(set) var nonDetection: NonDetectionStatistics?
     @Published private(set) var message = "Not started."
     @Published private(set) var isRunning = false
 
@@ -180,6 +183,7 @@ final class CalibrationController: ObservableObject {
 
     private nonisolated func generate(using box: UncheckedBox<CalibrationCoordinator>) {
         AppLog.calibration("All zones collected — generating profile")
+        captureTelemetry(from: box)
         let result = box.value.generateProfile()
         Task { @MainActor in
             switch result {
@@ -233,6 +237,12 @@ final class CalibrationController: ObservableObject {
     /// Writes the attempt breakdown so the calibration data survives the run.
     ///
     /// Reported only; nothing here adjusts any threshold.
+    /// Captures non-detection telemetry from the coordinator for reporting.
+    private nonisolated func captureTelemetry(from box: UncheckedBox<CalibrationCoordinator>) {
+        let stats = box.value.nonDetectionStatistics
+        Task { @MainActor in self.nonDetection = stats }
+    }
+
     private func writeReport(profileZones: Int, failure: String? = nil) {
         var counts = rejectionCounts
         let acceptedTotal = accepted.values.reduce(0, +)
@@ -256,6 +266,31 @@ final class CalibrationController: ObservableObject {
         text += "Attempt breakdown (total \(breakdown.total) attempts)\n"
         text += String(repeating: "-", count: 72) + "\n"
         for line in breakdown.lines() { text += "  \(line)\n" }
+        text += "\n"
+
+        text += "Non-detected frames — why the detection gate was not reached\n"
+        text += String(repeating: "-", count: 72) + "\n"
+        if let stats = nonDetection {
+            text += "  frames measured:        \(stats.count)\n"
+            text += String(
+                format: "  median pre-filter peak:  %.5f   (gate: >= %.3f after filtering)\n",
+                stats.medianPrefilterPeak, DetectionConstants.detectionPeakThreshold)
+            text += String(
+                format: "  median filtered peak:    %.5f\n", stats.medianFilteredPeak)
+            text += String(
+                format: "  band-pass survival:      median %.3f   min %.3f   max %.3f\n",
+                stats.medianRatio, stats.minimumRatio, stats.maximumRatio)
+            text += String(
+                format: "  loudest missed tap:      %.5f (pre-filter)\n",
+                stats.maximumPrefilterPeak)
+            text += "\n"
+            text += "  Reading this: a survival ratio near 1 means the band-pass passed the\n"
+            text += "  energy, so a low filtered peak reflects a genuinely quiet tap. A small\n"
+            text += "  ratio alongside a healthy pre-filter peak means the filter removed the\n"
+            text += "  tap's energy, and lowering the detection threshold would be the wrong fix.\n"
+        } else {
+            text += "  no non-detected frames were measured\n"
+        }
         text += "\n"
         text += "The dominant non-accepted cause identifies which criterion rejects\n"
         text += "natural taps. No threshold was changed by this run.\n"

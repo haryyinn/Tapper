@@ -11,8 +11,11 @@
 #   ./Scripts/build-app.sh [--release]
 #
 # Then:
-#   open build/Tapper.app                       # start/stop interface
-#   build/Tapper.app/Contents/MacOS/Tapper --validate   # guided validation
+#   open build/Tapper.app
+#
+# Calibration and validation run inside the application (Calibration and
+# Validation tabs). They are not shell commands: macOS attributes microphone
+# access to the launched app bundle, not to a binary executed from a terminal.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -45,5 +48,8 @@ codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
 echo "built $APP"
 codesign -dv "$APP" 2>&1 | sed -n '1,3p'
 echo
-echo "run the interface:      open $APP"
-echo "run guided validation:  $APP/Contents/MacOS/Tapper --validate --reps 25 --idle 60"
+echo "launch:  open $APP"
+echo
+echo "Calibration and validation are tabs inside the app."
+echo "Optional live trace:"
+echo "  log stream --predicate 'subsystem == \"com.tapper.Tapper\"' --info"
