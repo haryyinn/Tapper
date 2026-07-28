@@ -105,24 +105,29 @@ final class ValidationController: ObservableObject {
             recorder.observe(outcome: outcome, at: timestamp)
         }
 
-        // Both recognisers classify the same feature vector: the candidate
-        // observer fires with exactly the vector production is about to
-        // classify, so a difference between them is attributable to the
-        // recogniser alone (ADR-015). Measurement only — the k-NN verdict is
-        // recorded and never acted on, and the engine's behaviour is unchanged.
-        let comparison = RecogniserComparison()
-        let zones = profile.zones
+        // Every benchmark recogniser classifies the same feature vector: the
+        // candidate observer fires with exactly the vector production is about
+        // to classify, so a difference between them is attributable to the
+        // recogniser alone (ALGORITHM §17.25.3). Measurement only — these
+        // verdicts are recorded and never acted on, and the engine's behaviour
+        // is unchanged.
+        //
+        // The benchmark is built once, here, so per-tap latency measures
+        // classification rather than model preparation (§17.25.4).
+        let benchmark = RecogniserBenchmark.standard(
+            profiles: profile.zones, normalization: profile.normalization,
+            configuration: profile.configuration)
         let normalization = profile.normalization
         engine.setCandidateObserver { featureVector, timestamp in
             recorder.observe(
-                comparison: comparison.compare(
-                    featureVector: featureVector, profiles: zones,
-                    normalization: normalization, at: timestamp))
+                measurements: benchmark.evaluate(featureVector, at: timestamp),
+                normalizedVector: normalization.normalize(featureVector.values))
         }
-        if !zones.contains(where: \.supportsNearestNeighbour) {
+        AppLog.validation("Benchmark recognisers: \(benchmark.identifiers.joined(separator: ", "))")
+        if !profile.zones.contains(where: \.supportsNearestNeighbour) {
             AppLog.validation(
-                "k-NN unavailable: profile predates ADR-015 (no labelled samples). "
-                    + "Mahalanobis results are unaffected.")
+                "Sample-based recognisers unavailable: profile predates ADR-015 "
+                    + "(no labelled samples). Mahalanobis results are unaffected.")
         }
 
         self.engine = engine
@@ -310,8 +315,9 @@ final class TrialRecorder: @unchecked Sendable {
     private var windowStart = Date()
     private var firstActivity: Date?
 
-    /// Comparison results for candidates seen in the current window.
-    private var comparisons: [RecogniserComparison.Result] = []
+    /// Benchmark measurements for candidates seen in the current window, with
+    /// the normalized vector that produced them.
+    private var measurements: [(measurements: [RecogniserMeasurement], vector: [Double])] = []
 
     /// When audio activity was first observed since the last ``reset()``.
     var firstDetectedAudioAt: Date? {
@@ -323,16 +329,16 @@ final class TrialRecorder: @unchecked Sendable {
     func reset() {
         lock.lock()
         observations.removeAll()
-        comparisons.removeAll()
+        measurements.removeAll()
         windowStart = Date()
         firstActivity = nil
         lock.unlock()
     }
 
-    /// Records a dual-recogniser comparison for a candidate in this window.
-    func observe(comparison: RecogniserComparison.Result) {
+    /// Records the benchmark measurements for a candidate in this window.
+    func observe(measurements new: [RecogniserMeasurement], normalizedVector: [Double]) {
         lock.lock()
-        comparisons.append(comparison)
+        measurements.append((new, normalizedVector))
         lock.unlock()
     }
 
@@ -354,10 +360,10 @@ final class TrialRecorder: @unchecked Sendable {
     ) -> ValidationTrial {
         lock.lock()
         let observed = observations
-        // The last comparison corresponds to the last frame that reached
+        // The last measurement corresponds to the last frame that reached
         // classification, which is the frame the loop below reports. Both
         // therefore describe the same tap.
-        let comparison = comparisons.last
+        let measured = measurements.last
         lock.unlock()
 
         var detectedZone: String?
@@ -402,16 +408,23 @@ final class TrialRecorder: @unchecked Sendable {
         let succeeded =
             expectedZone.map { detectedZone == $0.rawValue } ?? (detectedZone == nil)
 
-        // `nil` when no candidate was classified, or when the profile carries
-        // no labelled samples — reported as "not evaluated", never as a k-NN
-        // failure.
-        let verdict = comparison?.nearestNeighbour.map { outcome in
-            TrialVerdict(
-                zone: outcome.status == .success ? outcome.zone.rawValue : nil,
-                status: String(describing: outcome.status),
-                confidence: outcome.confidence,
-                distance: outcome.distance,
-                neighbours: (comparison?.neighbours ?? []).map {
+        // One record per recogniser that was evaluated. A recogniser the
+        // profile could not support is absent rather than present with a failed
+        // verdict, so "not evaluated" stays distinguishable from "evaluated and
+        // rejected" (DATA_MODELS §7.13a).
+        let verdicts = (measured?.measurements ?? []).map { measurement in
+            RecogniserVerdictRecord(
+                recogniser: measurement.identifier,
+                zone: measurement.verdict.accepted
+                    ? measurement.verdict.outcome.zone.rawValue : nil,
+                status: String(describing: measurement.verdict.outcome.status),
+                confidence: measurement.verdict.outcome.confidence,
+                distance: measurement.verdict.distance,
+                acceptanceRadius: measurement.verdict.acceptanceRadius,
+                acceptanceMargin: measurement.verdict.acceptanceMargin,
+                accepted: measurement.verdict.accepted,
+                latencyMicroseconds: measurement.latencyMicroseconds,
+                neighbours: measurement.verdict.neighbours.map {
                     String(format: "%@@%.4f", $0.zone.rawValue, $0.distance)
                 })
         }
@@ -423,6 +436,6 @@ final class TrialRecorder: @unchecked Sendable {
             timestamp: Date(), promptDisplayedAt: promptDisplayedAt,
             countdownStartedAt: countdownStartedAt, tapWindowOpenedAt: tapWindowOpenedAt,
             firstDetectedAudioAt: firstActivity, tapWindowClosedAt: tapWindowClosedAt,
-            nearestNeighbour: verdict, voteMargin: comparison?.voteMargin)
+            featureVector: measured?.vector, verdicts: verdicts)
     }
 }

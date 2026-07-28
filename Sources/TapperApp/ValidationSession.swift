@@ -3,10 +3,15 @@ import Classification
 import Foundation
 import Runtime
 
-/// One recogniser's verdict for a trial (ADR-015).
+/// One recogniser's verdict for a trial (`DATA_MODELS` §7.13a).
 ///
-/// Recorded per trial so the two recognisers can be compared on the same tap.
-struct TrialVerdict: Codable, Sendable {
+/// Recorded per trial so every benchmark recogniser can be compared on the same
+/// tap, and so the acceptance radius can be assessed later from measurement
+/// rather than argument (`ALGORITHM` §17.25.6).
+struct RecogniserVerdictRecord: Codable, Sendable {
+
+    /// The benchmark identifier (`ALGORITHM` §17.25.2).
+    let recogniser: String
 
     /// The zone reported, or `nil` if nothing was recognized.
     let zone: String?
@@ -17,11 +22,25 @@ struct TrialVerdict: Codable, Sendable {
     /// Diagnostic confidence (0–100).
     let confidence: Double
 
-    /// Distance to the accepted zone, in that recogniser's own metric.
+    /// Distance to the winning zone, in that recogniser's own metric.
     let distance: Double
 
+    /// The acceptance radius this distance was tested against.
+    let acceptanceRadius: Double
+
+    /// `acceptanceRadius − distance`. Negative when the tap fell outside the
+    /// radius. This is the figure that decides whether the radius formula is
+    /// appropriate.
+    let acceptanceMargin: Double
+
+    /// Whether the tap was accepted as a zone.
+    let accepted: Bool
+
+    /// Classification latency, in microseconds, excluding model preparation.
+    let latencyMicroseconds: Double
+
     /// The neighbours behind the decision, nearest first, as "zone@distance".
-    /// Empty for recognisers that do not use neighbours.
+    /// Empty for recognisers that do not consult individual samples.
     let neighbours: [String]
 }
 
@@ -31,9 +50,10 @@ struct TrialVerdict: Codable, Sendable {
 /// positive.
 ///
 /// The top-level `detectedZone`, `status`, `confidence` and `distance` fields
-/// report the **production** (Mahalanobis) recogniser, so existing consumers of
-/// this schema are unaffected. The k-NN verdict is recorded alongside it in
-/// ``nearestNeighbour`` (ADR-015).
+/// report what the **runtime** did — the production recogniser's verdict, and
+/// the outcome the engine actually sequenced. Every benchmark recogniser's
+/// verdict, including production's own re-measured one, is in ``verdicts``
+/// (ADR-016).
 struct ValidationTrial: Codable, Sendable {
 
     /// Trial index within the run.
@@ -83,14 +103,20 @@ struct ValidationTrial: Codable, Sendable {
     /// When the tap window closed.
     let tapWindowClosedAt: Date?
 
-    /// The k-NN verdict for the same feature vector, or `nil` when k-NN could
-    /// not be evaluated — either no candidate reached classification, or the
-    /// active profile predates ADR-015 and carries no labelled samples.
-    let nearestNeighbour: TrialVerdict?
+    /// The normalized feature vector that produced this trial, or `nil` when no
+    /// candidate reached classification.
+    ///
+    /// Recorded so an unknown or misclassified tap can be located in feature
+    /// space against the calibration samples it failed to match (ADR-016).
+    let featureVector: [Double]?
 
-    /// The vote margin applied to the k-NN decision, recorded so a result can
-    /// be reproduced.
-    let voteMargin: Double?
+    /// One entry per benchmark recogniser evaluated (`ALGORITHM` §17.25).
+    ///
+    /// Empty when no candidate reached classification. A recogniser that could
+    /// not be evaluated is **absent** rather than present with a failed
+    /// verdict, so "not evaluated" stays distinguishable from "evaluated and
+    /// rejected" (`DATA_MODELS` §7.13a).
+    let verdicts: [RecogniserVerdictRecord]
 
     /// Operator reaction time in milliseconds, or `nil` if nothing was heard.
     var reactionMilliseconds: Double? {
@@ -98,18 +124,17 @@ struct ValidationTrial: Codable, Sendable {
         return heard.timeIntervalSince(opened) * 1000
     }
 
-    /// Whether k-NN produced the expected result for this trial, using the same
-    /// rule as ``succeeded``: the expected zone for a tap trial, no recognition
-    /// for an idle trial. `nil` when k-NN was not evaluated.
-    var nearestNeighbourSucceeded: Bool? {
-        guard let knn = nearestNeighbour else { return nil }
-        return expectedZone.map { knn.zone == $0 } ?? (knn.zone == nil)
+    /// The verdict from one recogniser, if it was evaluated for this trial.
+    func verdict(from recogniser: String) -> RecogniserVerdictRecord? {
+        verdicts.first { $0.recogniser == recogniser }
     }
 
-    /// Whether both recognisers reached the same zone. `nil` when k-NN was not
-    /// evaluated. Agreeing on "unrecognised" counts as agreement.
-    var recognisersAgree: Bool? {
-        nearestNeighbour.map { $0.zone == detectedZone }
+    /// Whether a recogniser produced the expected result, using the same rule
+    /// as ``succeeded``: the expected zone for a tap trial, no recognition for
+    /// an idle trial. `nil` when that recogniser was not evaluated.
+    func succeeded(for recogniser: String) -> Bool? {
+        guard let verdict = verdict(from: recogniser) else { return nil }
+        return expectedZone.map { verdict.zone == $0 } ?? (verdict.zone == nil)
     }
 }
 
@@ -199,84 +224,127 @@ struct ValidationSummary {
     }
 }
 
-/// Compares the two recognisers over a completed run (ADR-015).
+/// Per-recogniser metrics over a completed run (`ALGORITHM` §17.25.5).
 ///
-/// Every figure is computed from trials where both recognisers saw the same
+/// Every figure is computed from trials where the recognisers saw the identical
 /// feature vector, so a difference is attributable to the recogniser alone.
-/// It reports what was measured and never recommends a winner.
-struct RecogniserComparisonSummary {
+/// It reports what was measured and never recommends a winner: promotion is an
+/// explicit decision, not a benchmark outcome (ADR-016).
+struct RecogniserMetrics {
 
-    /// Trials in which k-NN was evaluated.
-    let evaluated: Int
+    /// The benchmark identifier.
+    let identifier: String
 
-    /// Tap trials in which k-NN was evaluated.
-    let evaluatedTaps: Int
+    /// Tap trials where this recogniser was evaluated.
+    let attempted: Int
 
-    /// Tap trials where the production recogniser was correct.
-    let mahalanobisCorrect: Int
+    /// Tap trials it identified correctly.
+    let correct: Int
 
-    /// Tap trials where k-NN was correct.
-    let nearestNeighbourCorrect: Int
+    /// Tap trials it assigned to the wrong zone.
+    let misclassified: Int
 
-    /// Trials where both reached the same zone.
-    let agreements: Int
+    /// Tap trials it did not recognise at all — false negatives.
+    let falseNegatives: Int
 
-    /// Trials where they reached different zones.
-    let disagreements: Int
+    /// Tap trials it reported as `unknown` or `ambiguous`.
+    let unknowns: Int
 
-    /// Disagreements broken down as (expected, mahalanobis, knn, count).
-    let disagreementDetail: [(expected: String, mahalanobis: String, knn: String, count: Int)]
+    /// Idle trials in which it reported a zone — false positives.
+    let falsePositives: Int
 
-    /// Whether any trial had a candidate that k-NN could not evaluate because
-    /// the profile carries no labelled samples.
-    let unavailableForProfile: Bool
+    /// Idle trials in which it was evaluated.
+    let idleOpportunities: Int
 
-    /// Agreement rate over evaluated trials.
-    var agreementRate: Double? {
-        evaluated > 0 ? Double(agreements) / Double(evaluated) : nil
+    /// Per-zone attempted and correct counts, canonical order.
+    let perZone: [(zone: String, attempted: Int, correct: Int)]
+
+    /// Classification latencies, in microseconds.
+    let latencies: [Double]
+
+    /// Acceptance margins (radius − distance) over accepted taps.
+    let acceptedMargins: [Double]
+
+    /// Acceptance margins over taps rejected on distance.
+    let rejectedMargins: [Double]
+
+    var accuracy: Double? {
+        attempted > 0 ? Double(correct) / Double(attempted) : nil
     }
 
-    /// Production accuracy over the tap trials where both were evaluated.
-    var mahalanobisAccuracy: Double? {
-        evaluatedTaps > 0 ? Double(mahalanobisCorrect) / Double(evaluatedTaps) : nil
+    var unknownRate: Double? {
+        attempted > 0 ? Double(unknowns) / Double(attempted) : nil
     }
 
-    /// k-NN accuracy over the same tap trials.
-    var nearestNeighbourAccuracy: Double? {
-        evaluatedTaps > 0 ? Double(nearestNeighbourCorrect) / Double(evaluatedTaps) : nil
+    var falseNegativeRate: Double? {
+        attempted > 0 ? Double(falseNegatives) / Double(attempted) : nil
     }
 
-    /// Builds the comparison from recorded trials.
-    static func make(from trials: [ValidationTrial]) -> RecogniserComparisonSummary {
-        let comparable = trials.filter { $0.nearestNeighbour != nil }
-        let comparableTaps = comparable.filter { $0.expectedZone != nil }
+    var falsePositiveRate: Double? {
+        idleOpportunities > 0 ? Double(falsePositives) / Double(idleOpportunities) : nil
+    }
 
-        var detail: [String: (String, String, String, Int)] = [:]
-        for trial in comparable where trial.recognisersAgree == false {
-            let expected = trial.expectedZone ?? "(idle)"
-            let maha = trial.detectedZone ?? "unrecognised"
-            let knn = trial.nearestNeighbour?.zone ?? "unrecognised"
-            let key = "\(expected)|\(maha)|\(knn)"
-            let existing = detail[key]?.3 ?? 0
-            detail[key] = (expected, maha, knn, existing + 1)
+    var medianLatency: Double? {
+        guard !latencies.isEmpty else { return nil }
+        let sorted = latencies.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    var p95Latency: Double? {
+        guard !latencies.isEmpty else { return nil }
+        let sorted = latencies.sorted()
+        return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+    }
+
+    /// Builds metrics for one recogniser.
+    static func make(identifier: String, from trials: [ValidationTrial]) -> RecogniserMetrics {
+        let evaluated = trials.filter { $0.verdict(from: identifier) != nil }
+        let taps = evaluated.filter { $0.expectedZone != nil }
+        let idle = evaluated.filter { $0.expectedZone == nil }
+
+        var perZone: [(zone: String, attempted: Int, correct: Int)] = []
+        for zone in InteractionZone.calibratable.map(\.rawValue) {
+            let rows = taps.filter { $0.expectedZone == zone }
+            guard !rows.isEmpty else { continue }
+            perZone.append(
+                (zone, rows.count, rows.filter { $0.succeeded(for: identifier) == true }.count))
         }
 
-        return RecogniserComparisonSummary(
-            evaluated: comparable.count,
-            evaluatedTaps: comparableTaps.count,
-            mahalanobisCorrect: comparableTaps.filter(\.succeeded).count,
-            nearestNeighbourCorrect: comparableTaps.filter { $0.nearestNeighbourSucceeded == true }
-                .count,
-            agreements: comparable.filter { $0.recognisersAgree == true }.count,
-            disagreements: comparable.filter { $0.recognisersAgree == false }.count,
-            disagreementDetail: detail.values
-                .map { (expected: $0.0, mahalanobis: $0.1, knn: $0.2, count: $0.3) }
-                .sorted { $0.count > $1.count },
-            unavailableForProfile: trials.contains {
-                $0.detectedZone != nil && $0.nearestNeighbour == nil
-            }
+        let tapVerdicts = taps.compactMap { $0.verdict(from: identifier) }
+        return RecogniserMetrics(
+            identifier: identifier,
+            attempted: taps.count,
+            correct: taps.filter { $0.succeeded(for: identifier) == true }.count,
+            misclassified: taps.filter {
+                guard let verdict = $0.verdict(from: identifier), let zone = verdict.zone
+                else { return false }
+                return zone != $0.expectedZone
+            }.count,
+            falseNegatives: taps.filter { $0.verdict(from: identifier)?.zone == nil }.count,
+            unknowns: tapVerdicts.filter { !$0.accepted }.count,
+            falsePositives: idle.filter { $0.verdict(from: identifier)?.zone != nil }.count,
+            idleOpportunities: idle.count,
+            perZone: perZone,
+            latencies: evaluated.compactMap { $0.verdict(from: identifier)?.latencyMicroseconds },
+            acceptedMargins: tapVerdicts.filter(\.accepted).map(\.acceptanceMargin),
+            rejectedMargins: tapVerdicts.filter { !$0.accepted }.map(\.acceptanceMargin)
         )
     }
+}
+
+/// The set of recognisers that appear anywhere in a run, in first-seen order.
+///
+/// Derived from the data rather than assumed, so a run recorded against a
+/// profile that could not support every recogniser reports exactly those that
+/// were evaluated.
+func evaluatedRecognisers(in trials: [ValidationTrial]) -> [String] {
+    var seen: [String] = []
+    for trial in trials {
+        for verdict in trial.verdicts where !seen.contains(verdict.recogniser) {
+            seen.append(verdict.recogniser)
+        }
+    }
+    return seen
 }
 
 /// Pads `text` to `width` characters, truncating if longer.
@@ -293,14 +361,18 @@ enum ConfusionMatrix {
 
     /// Renders a matrix for one recogniser.
     ///
+    /// Counts only trials where that recogniser was actually evaluated, so the
+    /// row totals equal the `attempted` figure reported for it. A trial in
+    /// which no candidate reached classification is not a rejection by any
+    /// recogniser and must not be charged to one (`DATA_MODELS` §7.13a).
+    ///
     /// - Parameters:
     ///   - trials: The trials to count. Idle trials are excluded.
-    ///   - reported: The zone that recogniser reported for a trial.
+    ///   - recogniser: The benchmark identifier to report on.
     /// - Returns: Formatted lines, or a single "not measured" line.
-    static func lines(
-        from trials: [ValidationTrial], reported: (ValidationTrial) -> String?
-    ) -> [String] {
-        let taps = trials.filter { $0.expectedZone != nil }
+    static func lines(from trials: [ValidationTrial], recogniser: String) -> [String] {
+        let reported: (ValidationTrial) -> String? = { $0.verdict(from: recogniser)?.zone }
+        let taps = trials.filter { $0.expectedZone != nil && $0.verdict(from: recogniser) != nil }
         guard !taps.isEmpty else { return ["not measured"] }
 
         let zones = InteractionZone.calibratable.map(\.rawValue)
@@ -327,19 +399,27 @@ enum ConfusionMatrix {
 /// Serializes validation results.
 enum ValidationExport {
 
-    /// The CSV representation, one row per trial.
+    /// The CSV representation, one row per trial per evaluated recogniser
+    /// (`ALGORITHM` §17.25.6).
+    ///
+    /// Expanding the rows this way keeps every acceptance measurement — the
+    /// distance, the radius it was tested against, and their difference — in
+    /// its own row, so the radius formula can be assessed directly from the
+    /// file. Trials where no candidate reached classification appear once with
+    /// an empty recogniser column, so they are not silently dropped.
     static func csv(_ run: ValidationRun) -> String {
         var lines = [
             "index,expected_zone,detected_zone,status,confidence,distance,"
                 + "latency_ms,outcome,succeeded,timestamp,"
                 + "prompt_displayed_at,countdown_started_at,tap_window_opened_at,"
                 + "first_detected_audio_at,tap_window_closed_at,reaction_ms,"
-                + "knn_zone,knn_status,knn_confidence,knn_distance,knn_neighbours,"
-                + "knn_succeeded,recognisers_agree,vote_margin"
+                + "recogniser,rec_zone,rec_status,rec_confidence,rec_distance,"
+                + "rec_acceptance_radius,rec_acceptance_margin,rec_accepted,"
+                + "rec_latency_us,rec_neighbours,rec_succeeded,feature_vector"
         ]
         let formatter = ISO8601DateFormatter()
         for trial in run.trials {
-            let fields: [String] = [
+            let shared: [String] = [
                 String(trial.index),
                 trial.expectedZone ?? "",
                 trial.detectedZone ?? "",
@@ -356,17 +436,37 @@ enum ValidationExport {
                 trial.firstDetectedAudioAt.map(formatter.string(from:)) ?? "",
                 trial.tapWindowClosedAt.map(formatter.string(from:)) ?? "",
                 trial.reactionMilliseconds.map { String(format: "%.1f", $0) } ?? "",
-                trial.nearestNeighbour?.zone ?? "",
-                trial.nearestNeighbour?.status ?? "",
-                trial.nearestNeighbour.map { String(format: "%.4f", $0.confidence) } ?? "",
-                trial.nearestNeighbour.map { String(format: "%.6f", $0.distance) } ?? "",
-                // Semicolon-separated: the field is comma-free by construction.
-                trial.nearestNeighbour.map { $0.neighbours.joined(separator: ";") } ?? "",
-                trial.nearestNeighbourSucceeded.map { $0 ? "true" : "false" } ?? "",
-                trial.recognisersAgree.map { $0 ? "true" : "false" } ?? "",
-                trial.voteMargin.map { String(format: "%.4f", $0) } ?? "",
             ]
-            lines.append(fields.joined(separator: ","))
+            // Semicolon-separated: these fields must stay comma-free.
+            let vector =
+                trial.featureVector.map {
+                    $0.map { String(format: "%.6f", $0) }
+                        .joined(separator: ";")
+                } ?? ""
+
+            guard !trial.verdicts.isEmpty else {
+                lines.append(
+                    (shared + [String](repeating: "", count: 11) + [vector])
+                        .joined(separator: ","))
+                continue
+            }
+            for verdict in trial.verdicts {
+                let fields: [String] = [
+                    verdict.recogniser,
+                    verdict.zone ?? "",
+                    verdict.status,
+                    String(format: "%.4f", verdict.confidence),
+                    String(format: "%.6f", verdict.distance),
+                    String(format: "%.6f", verdict.acceptanceRadius),
+                    String(format: "%.6f", verdict.acceptanceMargin),
+                    verdict.accepted ? "true" : "false",
+                    String(format: "%.2f", verdict.latencyMicroseconds),
+                    verdict.neighbours.joined(separator: ";"),
+                    trial.succeeded(for: verdict.recogniser).map { $0 ? "true" : "false" } ?? "",
+                    vector,
+                ]
+                lines.append((shared + fields).joined(separator: ","))
+            }
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -379,75 +479,155 @@ enum ValidationExport {
         return try encoder.encode(run)
     }
 
-    /// The recogniser-comparison section (ADR-015).
+    /// The recogniser-benchmark section (`ALGORITHM` §17.25.5, ADR-016).
     ///
-    /// Both recognisers classified the same feature vectors, so any difference
+    /// Every recogniser classified the same feature vectors, so any difference
     /// below is attributable to the recogniser. The section reports the
-    /// measurement and draws no conclusion about which should be adopted.
-    private static func recogniserComparison(_ run: ValidationRun) -> String {
-        let comparison = RecogniserComparisonSummary.make(from: run.trials)
-        var out = "Recogniser comparison — Mahalanobis vs k-NN (ADR-015)\n"
+    /// measurement and names no winner: promotion is an explicit decision, not
+    /// a benchmark outcome.
+    private static func recogniserBenchmark(_ run: ValidationRun) -> String {
+        let identifiers = evaluatedRecognisers(in: run.trials)
+        var out = "Recogniser benchmark (ALGORITHM §17.25, ADR-016)\n"
         out += String(repeating: "-", count: 72) + "\n"
 
-        guard comparison.evaluated > 0 else {
-            if comparison.unavailableForProfile {
-                out += "  k-NN not evaluated: the active calibration profile predates ADR-015\n"
-                out += "  and carries no labelled samples. Re-run calibration to enable the\n"
-                out += "  comparison. The Mahalanobis figures above are unaffected.\n\n"
-            } else {
-                out += "  not measured — no candidate reached classification\n\n"
-            }
+        guard !identifiers.isEmpty else {
+            out += "  not measured — no candidate reached classification\n\n"
             return out
         }
 
-        out += String(
-            format: "  trials compared     %d  (both recognisers saw the same feature vector)\n",
-            comparison.evaluated)
-        if let maha = comparison.mahalanobisAccuracy, let knn = comparison.nearestNeighbourAccuracy
-        {
-            out += String(
-                format: "  Mahalanobis         %6.2f%%  (%d/%d)\n", maha * 100,
-                comparison.mahalanobisCorrect, comparison.evaluatedTaps)
-            out += String(
-                format: "  k-NN                %6.2f%%  (%d/%d)   vote margin %.2f\n", knn * 100,
-                comparison.nearestNeighbourCorrect, comparison.evaluatedTaps,
-                run.trials.compactMap(\.voteMargin).first ?? 0)
+        out += "  Production recogniser is mahalanobis. Every other row is experimental\n"
+        out += "  and was evaluated only; no result here promotes a recogniser.\n\n"
+
+        let metrics = identifiers.map { RecogniserMetrics.make(identifier: $0, from: run.trials) }
+
+        out +=
+            "  " + column("recogniser", 18) + column("accuracy", 11) + column("unknown", 10)
+            + column("false neg", 11) + column("false pos", 11) + column("median µs", 11)
+            + "p95 µs\n"
+        for metric in metrics {
+            out += "  " + column(metric.identifier, 18)
+            out += column(
+                metric.accuracy.map { String(format: "%.1f%%", $0 * 100) } ?? "—", 11)
+            out += column(
+                metric.unknownRate.map { String(format: "%.1f%%", $0 * 100) } ?? "—", 10)
+            out += column(
+                metric.falseNegativeRate.map { String(format: "%.1f%%", $0 * 100) } ?? "—", 11)
+            out += column(
+                metric.falsePositiveRate.map { String(format: "%.1f%%", $0 * 100) } ?? "—", 11)
+            out += column(metric.medianLatency.map { String(format: "%.1f", $0) } ?? "—", 11)
+            out += (metric.p95Latency.map { String(format: "%.1f", $0) } ?? "—") + "\n"
         }
-        if let rate = comparison.agreementRate {
-            out += String(
-                format: "  agreement           %6.2f%%  (%d agree, %d disagree)\n", rate * 100,
-                comparison.agreements, comparison.disagreements)
+        out += "\n"
+        out += "  accuracy over tap trials where that recogniser was evaluated;\n"
+        out += "  false positives over idle trials. A recogniser absent from a trial was\n"
+        out += "  not evaluated there and is excluded from its own denominators.\n\n"
+
+        if identifiers.contains("knn-1") {
+            out += "  Note: at k=1 the vote margin is degenerate — one neighbour holds the\n"
+            out += "  entire vote weight — so only distance acceptance rejects (§17.25.2).\n\n"
+        }
+
+        out += "  Per-zone accuracy\n"
+        out +=
+            "    " + column("recogniser", 18)
+            + InteractionZone.calibratable.map { column($0.rawValue, 14) }.joined() + "\n"
+        for metric in metrics {
+            out += "    " + column(metric.identifier, 18)
+            for zone in InteractionZone.calibratable.map(\.rawValue) {
+                let row = metric.perZone.first { $0.zone == zone }
+                let text =
+                    row.map {
+                        String(
+                            format: "%.0f%% (%d/%d)",
+                            Double($0.correct)
+                                / Double($0.attempted) * 100, $0.correct, $0.attempted)
+                    } ?? "—"
+                out += column(text, 14)
+            }
+            out += "\n"
         }
         out += "\n"
 
-        if comparison.disagreementDetail.isEmpty {
-            out += "  The recognisers agreed on every compared trial.\n\n"
-        } else {
-            out += "  Where they disagree\n"
-            out +=
-                "    " + column("expected", 14) + column("Mahalanobis", 18)
-                + column("k-NN", 18) + "count\n"
-            for row in comparison.disagreementDetail {
-                out +=
-                    "    " + column(row.expected, 14) + column(row.mahalanobis, 18)
-                    + column(row.knn, 18) + String(row.count) + "\n"
+        out += acceptanceInstrumentation(metrics)
+
+        for identifier in identifiers {
+            out += "  Confusion matrix — \(identifier)\n"
+            for line in ConfusionMatrix.lines(from: run.trials, recogniser: identifier) {
+                out += "    \(line)\n"
             }
             out += "\n"
         }
 
-        out += "  Confusion matrix — Mahalanobis\n"
-        for line in ConfusionMatrix.lines(from: run.trials, reported: \.detectedZone) {
-            out += "    \(line)\n"
+        out += disagreements(run.trials, identifiers: identifiers)
+
+        out += "  Per-tap distances, radii, margins and neighbours are in the CSV.\n\n"
+        return out
+    }
+
+    /// The acceptance-radius instrumentation (`ALGORITHM` §17.25.6).
+    ///
+    /// Reports how much room each acceptance had, and how far each rejection
+    /// missed by, so the radius formula can later be assessed from data. It
+    /// draws no conclusion and changes no threshold.
+    private static func acceptanceInstrumentation(_ metrics: [RecogniserMetrics]) -> String {
+        var out = "  Acceptance radius instrumentation (§17.25.6 — measurement only)\n"
+        out +=
+            "    " + column("recogniser", 18) + column("accepted n", 12)
+            + column("margin med", 12) + column("margin min", 12) + column("rejected n", 12)
+            + "overshoot med\n"
+        for metric in metrics {
+            let accepted = metric.acceptedMargins.sorted()
+            let rejected = metric.rejectedMargins.sorted()
+            out += "    " + column(metric.identifier, 18)
+            out += column(String(accepted.count), 12)
+            out += column(
+                accepted.isEmpty ? "—" : String(format: "%.4f", accepted[accepted.count / 2]), 12)
+            out += column(accepted.isEmpty ? "—" : String(format: "%.4f", accepted[0]), 12)
+            out += column(String(rejected.count), 12)
+            // Rejected margins are negative; report how far outside the radius.
+            out +=
+                rejected.isEmpty
+                ? "—" : String(format: "%.4f", -rejected[rejected.count / 2])
+            out += "\n"
         }
         out += "\n"
-        out += "  Confusion matrix — k-NN\n"
-        for line in ConfusionMatrix.lines(from: run.trials, reported: { $0.nearestNeighbour?.zone })
-        {
-            out += "    \(line)\n"
+        out += "    margin = radius − distance. A small positive median means acceptances\n"
+        out += "    only just fit; a small overshoot means rejections only just missed.\n"
+        out += "    Either indicates the radius is close to the decisions it governs.\n\n"
+        return out
+    }
+
+    /// Trials where the recognisers did not all reach the same zone.
+    private static func disagreements(
+        _ trials: [ValidationTrial], identifiers: [String]
+    ) -> String {
+        guard identifiers.count > 1 else { return "" }
+        var out = "  Where the recognisers disagree\n"
+
+        let rows = trials.filter { trial in
+            let zones = identifiers.compactMap { trial.verdict(from: $0) }.map { $0.zone ?? "—" }
+            return Set(zones).count > 1
         }
-        out += "\n"
-        out += "  Neighbours behind each k-NN decision are in the CSV (knn_neighbours),\n"
-        out += "  as \"zone@distance\", nearest first.\n"
+        guard !rows.isEmpty else {
+            out += "    They agreed on every evaluated trial.\n\n"
+            return out
+        }
+
+        out +=
+            "    " + column("trial", 7) + column("expected", 14)
+            + identifiers.map { column($0, 18) }.joined() + "\n"
+        for trial in rows.prefix(40) {
+            out +=
+                "    " + column(String(trial.index), 7)
+                + column(trial.expectedZone ?? "(idle)", 14)
+            for identifier in identifiers {
+                out += column(trial.verdict(from: identifier)?.zone ?? "—", 18)
+            }
+            out += "\n"
+        }
+        if rows.count > 40 {
+            out += "    … \(rows.count - 40) more, see the CSV\n"
+        }
         out += "\n"
         return out
     }
@@ -538,7 +718,7 @@ enum ValidationExport {
         }
         out += "\n"
 
-        out += recogniserComparison(run)
+        out += recogniserBenchmark(run)
 
         out += "Not covered by this run (measure separately, see VALIDATION.md)\n"
         out += String(repeating: "-", count: 72) + "\n"
