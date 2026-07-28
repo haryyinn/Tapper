@@ -2252,17 +2252,20 @@ The objective is to determine:
 
 ## 17.12 Similarity Metrics
 
-Tapper supports two recognisers, both deterministic and both operating on the
-canonical Feature Vector (ADR-015):
+Tapper supports several recognisers, all deterministic and all operating on the
+canonical Feature Vector (ADR-015, ADR-016):
 
 1. **Mahalanobis Distance** — the Version 1 metric, specified in §17.13 onwards.
 2. **Distance-weighted k-Nearest Neighbour** — specified in §17.23, operating on
    the labelled samples stored in the calibration profile.
+3. **Nearest Centroid** — specified in §17.24, also operating on the stored
+   samples.
 
-Neither is the mandated default. The active recogniser is selected by
-configuration, and validation runs both on identical trials so that the choice
-can be made from measured data rather than assumption. Until that evidence
-exists, Mahalanobis remains the default.
+**Mahalanobis is the production recogniser.** The others are experimental and
+are evaluated, never executed against: a benchmark result does not promote a
+recogniser. Validation evaluates the full set defined in §17.25 on identical
+trials so the choice can eventually be made from measured data rather than
+assumption. Promotion is an explicit decision requiring hardware evidence.
 
 Mahalanobis Distance shall remain available in all Version 1-compatible builds.
 
@@ -2619,6 +2622,126 @@ conditions hold:
 
 If the first condition fails the result is `unknown`; if the second fails the
 result is `ambiguous`. In both cases no command is executed.
+
+## 17.24 Nearest Centroid
+
+### 17.24.1 Purpose
+
+The Nearest Centroid recogniser assigns an observation to the zone whose mean
+sample is closest in the normalized feature space. It is included in the
+benchmark set (§17.25) as the simplest recogniser that uses the stored samples,
+and therefore as the baseline against which any more elaborate recogniser must
+justify its complexity.
+
+### 17.24.2 Model
+
+For each zone, the centroid is the mean of that zone's stored samples:
+
+```
+c = (1/n) Σ sᵢ
+```
+
+Distances are Euclidean, in the normalized feature space of §17.23.2. Unlike
+Mahalanobis, no covariance is estimated, so no regularization is required and
+no matrix is inverted.
+
+### 17.24.3 Acceptance Radius
+
+Each zone's acceptance radius is derived from the spread of its own samples
+about its centroid, using the threshold formulation of §17.18:
+
+```
+r = mean(dᵢ) + k · σ(dᵢ)      where dᵢ = ‖sᵢ − c‖
+```
+
+This introduces no new constant: `k` is the existing threshold multiplier.
+
+### 17.24.4 Rejection Policy
+
+A recognition is accepted only when both conditions hold, mirroring §17.23.7:
+
+1. **Distance acceptance.** The distance to the winning centroid shall not
+   exceed that zone's acceptance radius.
+2. **Separation margin.** The runner-up centroid shall be farther than the
+   winner by at least the profile's ambiguity margin, which is an absolute
+   distance and therefore directly comparable here.
+
+If the first condition fails the result is `unknown`; if the second fails the
+result is `ambiguous`.
+
+### 17.24.5 Confidence
+
+Confidence is reported on the same scale as §17.17, as a function of the
+winning distance relative to the acceptance radius. It is diagnostic and shall
+never alter the decision.
+
+---
+
+## 17.25 Recogniser Benchmark
+
+### 17.25.1 Purpose
+
+The benchmark evaluates several recognisers on identical observations so that
+the production recogniser can be chosen from measured hardware performance
+(ADR-016). It is a **measurement facility**. Its results are reported and never
+acted upon: no recogniser is selected, promoted, or disabled by a benchmark
+outcome.
+
+### 17.25.2 Membership
+
+The Version 1 benchmark set is:
+
+| Identifier | Specification |
+|---|---|
+| `mahalanobis` | §17.13 |
+| `nearest-centroid` | §17.24 |
+| `knn-1` | §17.23 with k = 1 |
+| `knn-3-weighted` | §17.23 with k = 3 |
+| `knn-5-weighted` | §17.23 with k = 5 |
+
+At k = 1 the weighted vote of §17.23.5 is degenerate — a single neighbour holds
+the entire vote weight — so the vote-margin condition of §17.23.7 is always
+satisfied and only distance acceptance governs rejection. This is a property of
+the configuration, not a defect, and shall be stated wherever `knn-1` results
+are reported.
+
+### 17.25.3 Identical Input
+
+Every recogniser in the set shall receive the same Feature Vector instance and
+the same normalization parameters, taken from the candidate that production
+classified. Any difference between their outputs is then attributable to the
+recogniser alone.
+
+### 17.25.4 Model Preparation
+
+A recogniser shall be constructed against the calibration profile once, before
+measurement begins, and shall then classify many observations. Quantities
+derivable from the profile — centroids, radii, inverted covariances — shall be
+computed during construction, so reported latency measures classification only.
+
+### 17.25.5 Reported Metrics
+
+For each recogniser the benchmark shall report:
+
+- overall accuracy;
+- per-zone accuracy;
+- a confusion matrix of expected against reported zone;
+- unknown rate, over evaluated taps;
+- false negatives, being taps yielding no recognition;
+- false positives, being recognitions during idle recording;
+- classification latency.
+
+### 17.25.6 Acceptance Instrumentation
+
+For every evaluated observation the benchmark shall record the distance
+computed, the acceptance radius tested against, the difference between them,
+whether the observation was accepted, and the reported confidence.
+
+The acceptance radius formulations of §17.23.6 and §17.24.3 are analytical
+choices, not measured ones. This instrumentation exists so that a later
+decision about them can be evidence-based. Recording it changes no threshold.
+
+---
 
 # 18. Classification Engine
 

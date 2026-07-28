@@ -2555,6 +2555,49 @@ No runtime learning or profile modification shall occur during recognition.
 
 ---
 
+# 7.13a Validation Trial Records
+
+Validation trial records are **developer-facing measurement artefacts**, not
+runtime models. Nothing in the recognition path reads them, and their schema
+carries no compatibility guarantee for end users.
+
+Each trial shall record, in addition to the fields describing the prompt and
+the production outcome:
+
+```
+struct ValidationTrial {
+    ...
+    featureVector: [Double]?          // normalized; nil when no candidate
+    verdicts: [RecogniserVerdictRecord]
+}
+
+struct RecogniserVerdictRecord {
+    recogniser: String                // benchmark identifier, §17.25.2
+    zone: String?                     // nil when not accepted
+    status: String
+    confidence: Double
+    distance: Double
+    acceptanceRadius: Double
+    acceptanceMargin: Double          // radius − distance; negative = rejected
+    accepted: Bool
+    latencyMicroseconds: Double
+    neighbours: [String]              // "zone@distance", nearest first; may be empty
+}
+```
+
+The normalized Feature Vector is recorded so that an unknown or misclassified
+tap can be located in feature space against the calibration samples it failed
+to match (ADR-016). It is the same normalized representation already stored in
+ZoneProfile, and introduces no new class of persisted data.
+
+`verdicts` shall contain one entry per benchmark recogniser evaluated. An empty
+array means no candidate reached classification. A recogniser that could not be
+evaluated — for example k-NN against a profile predating ADR-015 — shall be
+absent from the array rather than present with a failed verdict, so that
+"not evaluated" and "evaluated and rejected" remain distinguishable.
+
+---
+
 # 7.14 Design Constraints
 
 Calibration Models shall remain independent of:

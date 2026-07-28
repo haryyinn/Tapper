@@ -366,3 +366,107 @@ samples keeps LDA available for future evaluation without further migration.
 - Two recognisers must be maintained during the comparison period.
 - Recognition remains deterministic, on-device, and free of any ML framework.
 
+
+---
+
+# ADR-016 — Recogniser Benchmark Framework and Offline Dataset Inspection
+
+**Status:** Accepted
+**Supersedes:** none
+**Amends:** ADR-015
+
+## Context
+
+ADR-015 introduced a second recogniser and had validation run both on identical
+trials, so that the choice between them could be made from measurement. Two
+gaps remained.
+
+First, the comparison was hard-coded to exactly two recognisers. Deciding which
+recogniser is best requires evaluating more than two, and the candidates worth
+evaluating are all cheap: they share the same stored samples and differ only in
+how they turn distances into a decision. A framework that admits *n* recognisers
+costs little and removes the temptation to argue about candidates that were
+never measured.
+
+Second, the acceptance radius of §17.23.6 is an analytical choice — `mean + k·σ`
+of the leave-one-out nearest-neighbour distances — made because it mirrors the
+existing threshold formulation, not because it was measured. Whether it is
+appropriate cannot be determined without recording, for every real tap, both the
+distance observed and the radius it was tested against.
+
+Separately, storing every labelled sample (ADR-015) turned the calibration
+profile into a dataset. A dataset that cannot be inspected is of limited use:
+questions such as "do these zones overlap?" and "is this tap an outlier or a
+different cluster?" are geometric, and answering them from summary statistics
+is exactly the indirection ADR-015 set out to remove.
+
+## Decision
+
+### 1. The production recogniser does not change
+
+Mahalanobis remains the recogniser wired to command execution. No benchmark
+result promotes a recogniser automatically. Promotion is a separate, explicit
+decision taken on hardware evidence.
+
+### 2. Recognisers become a uniform, enumerable abstraction
+
+A recogniser is any deterministic mapping from a feature vector to a
+classification outcome, given a calibration profile. Validation evaluates a set
+of them on the identical normalized feature vector and reports each one's
+metrics side by side.
+
+The Version 1 benchmark set is:
+
+| Identifier | Description |
+|---|---|
+| `mahalanobis` | The production recogniser (§17.13). |
+| `nearest-centroid` | Euclidean distance to each zone mean (§17.24). |
+| `knn-1` | Nearest neighbour, k = 1 (§17.23). |
+| `knn-3-weighted` | Distance-weighted k-NN, k = 3 (§17.23). |
+| `knn-5-weighted` | Distance-weighted k-NN, k = 5 (§17.23). |
+
+Recognisers are constructed against a profile once and then classify many
+vectors, so that measured latency reflects classification and not
+model preparation. Without this, a recogniser that derives its model per call
+would be reported as slower for a reason unrelated to its merits.
+
+### 3. The acceptance radius is instrumented, not replaced
+
+The formula of §17.23.6 is unchanged. Every evaluated tap records the distance
+observed, the radius it was tested against, their difference, whether the tap
+was accepted, and the resulting confidence. This is measurement infrastructure
+for a later decision; it changes no threshold.
+
+### 4. Validation exports feature vectors
+
+Each trial records the normalized feature vector that produced it. Without it,
+an unknown or misclassified tap cannot be located in feature space, and the
+dataset cannot be inspected against the calibration samples it failed to match.
+
+### 5. Dataset inspection is an offline developer tool
+
+Feature-space inspection is provided as a separate executable, not as part of
+the application. It reads a calibration profile and, optionally, a validation
+run, and writes a static report. It is never present in the shipped bundle,
+performs no capture, and cannot modify a profile.
+
+Projection uses **principal component analysis**. t-SNE and UMAP were
+considered and rejected: both are stochastic, both are sensitive to
+hyperparameters whose defaults would themselves become unexamined heuristics,
+neither preserves global distances — which is precisely the property under
+investigation — and both would require a dependency the project does not have.
+PCA is deterministic, has no hyperparameters, is implementable with the linear
+algebra already present, and the variance it fails to capture is reportable, so
+its own inadequacy is visible rather than hidden.
+
+## Consequences
+
+- The benchmark set grows the validation report and the exported schema. Both
+  are developer-facing artefacts, so the cost is acceptable.
+- Five recognisers run per candidate instead of two. All are O(samples) over a
+  dataset of roughly 80 vectors, and the cost falls outside the audio callback.
+- Nothing in this ADR changes detection, and nothing changes what the
+  application does at runtime with a recognised tap.
+- The projection tool can mislead if a two-dimensional view is read as the
+  space the recogniser sees. Reports state the captured variance so that a
+  low-fidelity projection is identifiable as such.
