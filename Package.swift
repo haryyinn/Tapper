@@ -30,6 +30,7 @@ let package = Package(
         .library(name: "Diagnostics", targets: ["Diagnostics"]),
         .library(name: "SystemIntegration", targets: ["SystemIntegration"]),
         .library(name: "Runtime", targets: ["Runtime"]),
+        .library(name: "Inspection", targets: ["Inspection"]),
     ],
     targets: [
         .target(name: "Tapper"),
@@ -53,6 +54,10 @@ let package = Package(
                 "Commands", "Configuration", "Diagnostics", "SystemIntegration",
             ]
         ),
+        // Offline developer utility (ADR-016 §5). Deliberately not a dependency
+        // of TapperApp: it is never present in the shipped bundle.
+        .target(name: "Inspection", dependencies: ["Calibration", "Features"]),
+        .executableTarget(name: "TapperInspect", dependencies: ["Inspection", "Calibration"]),
         .executableTarget(
             name: "TapperApp",
             dependencies: [
@@ -81,6 +86,8 @@ let package = Package(
             dependencies: ["Diagnostics", "Classification", "Calibration", "Configuration"]
         ),
         .testTarget(name: "SystemIntegrationTests", dependencies: ["SystemIntegration"]),
+        .testTarget(
+            name: "InspectionTests", dependencies: ["Inspection", "Calibration", "Features"]),
         .testTarget(
             name: "RuntimeTests",
             dependencies: [
