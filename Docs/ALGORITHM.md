@@ -2250,11 +2250,26 @@ The objective is to determine:
 
 ---
 
-## 17.12 Mahalanobis Distance
+## 17.12 Similarity Metrics
 
-Tapper shall use Mahalanobis Distance as its primary similarity metric.
+Tapper supports two recognisers, both deterministic and both operating on the
+canonical Feature Vector (ADR-015):
 
-Unlike Euclidean distance, Mahalanobis Distance accounts for:
+1. **Mahalanobis Distance** — the Version 1 metric, specified in §17.13 onwards.
+2. **Distance-weighted k-Nearest Neighbour** — specified in §17.23, operating on
+   the labelled samples stored in the calibration profile.
+
+Neither is the mandated default. The active recogniser is selected by
+configuration, and validation runs both on identical trials so that the choice
+can be made from measured data rather than assumption. Until that evidence
+exists, Mahalanobis remains the default.
+
+Mahalanobis Distance shall remain available in all Version 1-compatible builds.
+
+### 17.12.1 Mahalanobis Distance
+
+Mahalanobis Distance is used as a similarity metric because, unlike Euclidean
+distance, it accounts for:
 
 - Feature scaling
 - Feature correlation
@@ -2529,6 +2544,81 @@ This approach provides:
 - Excellent real-time performance
 
 The mathematical model established here serves as the foundation for the runtime Classification Engine described in the following section.
+
+---
+
+## 17.23 Distance-Weighted k-Nearest Neighbour
+
+### 17.23.1 Purpose
+
+The k-Nearest Neighbour recogniser classifies an observation against the
+labelled samples collected during calibration, rather than against a
+distributional summary of them. It estimates no parameters, represents zones
+that the user taps in more than one way, and admits new samples in constant
+time (ADR-015).
+
+### 17.23.2 Feature Space
+
+Observations and stored samples shall both be transformed by the calibration
+profile's global normalization parameters (§15.7) before any distance is
+computed. Without this, features measured in hertz would dominate features
+measured in normalized amplitude.
+
+### 17.23.3 Distance
+
+Euclidean distance in the normalized feature space:
+
+```
+d(x, s) = sqrt( Σ (xᵢ − sᵢ)² )
+```
+
+### 17.23.4 Neighbour Selection
+
+The k nearest stored samples are selected, with k = 3 by default. Ties in
+distance shall be broken by the canonical zone order defined in §18.11, so that
+selection is deterministic.
+
+### 17.23.5 Weighted Vote
+
+Each selected neighbour votes for its label with weight:
+
+```
+w = 1 / (d + ε)
+```
+
+where ε is a small positive constant preventing division by zero. The predicted
+zone is the label with the greatest total weight. Ties in total weight shall be
+broken by the canonical zone order.
+
+### 17.23.6 Confidence
+
+Confidence is the winning label's share of the total vote weight, expressed as a
+percentage:
+
+```
+confidence = 100 × (winning weight / total weight)
+```
+
+Confidence is diagnostic. It shall never alter the classification decision.
+
+### 17.23.7 Rejection Policy
+
+Raw nearest-neighbour classification always returns a label. To satisfy the
+fail-safe principle (ADR-009), a recognition shall be accepted only when both
+conditions hold:
+
+1. **Distance acceptance.** The distance to the nearest neighbour of the winning
+   zone shall not exceed that zone's acceptance radius, derived during
+   calibration as `mean + k·σ` of the leave-one-out nearest-neighbour distances
+   within that zone. This mirrors the threshold formulation of §17.18 and
+   introduces no new constant.
+
+2. **Vote margin.** The winning zone's vote weight shall exceed the runner-up's
+   by at least the configured ambiguity margin, expressed as a fraction of the
+   total weight.
+
+If the first condition fails the result is `unknown`; if the second fails the
+result is `ambiguous`. In both cases no command is executed.
 
 # 18. Classification Engine
 

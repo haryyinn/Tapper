@@ -2273,8 +2273,26 @@ struct ZoneProfile {
 
     let threshold: Double
 
+    let samples: [FeatureVector]
+
+    let neighbourRadius: Double
+
 }
 ```
+
+`samples` holds every accepted Feature Vector collected for the zone during
+calibration, in chronological order (ADR-015). The statistical fields above are
+derived from these samples and are retained; the samples are never discarded,
+because mean and covariance can be recomputed from them while the reverse is
+impossible.
+
+`neighbourRadius` is the zone's k-Nearest Neighbour acceptance radius, derived
+during calibration from the leave-one-out nearest-neighbour distances within the
+zone (`ALGORITHM` §17.23.7).
+
+Profiles written before ADR-015 contain no samples. They remain valid for
+Mahalanobis recognition and shall report k-Nearest Neighbour recognition as
+unavailable rather than being silently loaded as complete.
 
 ---
 

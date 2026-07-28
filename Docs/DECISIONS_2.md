@@ -287,3 +287,82 @@ Maintain a focused and achievable Version 1.
 ---
 
 # End of Document
+
+---
+
+# ADR-015 — Labelled Sample Profiles and Dual Recognisers
+
+**Status:** Accepted
+
+## Context
+
+Version 1 represents each interaction zone by a mean vector, a covariance
+matrix, and an acceptance threshold, and classifies with Mahalanobis distance
+(ADR-013, `ALGORITHM` §17). Hardware validation exposed three limitations of
+that representation:
+
+1. **Under-determined statistics.** A 10×10 covariance has 55 free parameters
+   per zone. With 20 samples per zone the engine estimates 220 parameters from
+   80 observations, which is why mandatory diagonal loading (λ = 1e-3) is
+   required for the matrices to remain invertible at all.
+
+2. **Unimodality assumption.** A single Gaussian per zone cannot represent a
+   user who taps one zone in more than one way; the two modes average into a
+   centroid that represents neither.
+
+3. **Irreversible data loss.** Calibration discards the observations after
+   computing statistics. Mean and covariance can always be recomputed from
+   stored samples; the samples cannot be recovered from the statistics. This
+   also prevents offline re-analysis of real calibration data.
+
+Separately, and importantly, this decision does **not** address calibration
+retries. Taps that are not detected or are rejected during validation fail in
+the Detection subsystem, before any recogniser is invoked. That is tracked as
+independent work.
+
+## Decision
+
+1. The calibration profile shall additionally persist **every accepted
+   feature vector together with its zone label**. Existing statistics are
+   retained, not replaced.
+
+2. Two recognisers shall exist concurrently:
+   - **Mahalanobis** — the Version 1 recogniser, unchanged and still available.
+   - **Distance-weighted k-nearest-neighbour** — operating on the stored
+     labelled samples.
+
+3. Neither is declared the default on the strength of argument. Validation runs
+   both recognisers on identical trials and reports agreement and disagreement.
+   A default shall be chosen only from empirical hardware data.
+
+4. k-NN shall apply an explicit rejection policy so that it can answer
+   "unknown". Raw nearest-neighbour classification always returns a class,
+   which would violate the fail-safe principle (ADR-009).
+
+## Rationale
+
+k-NN was selected as the second recogniser for reasons specific to Tapper:
+
+- it estimates **no** parameters, so 20 samples per zone is not a statistical
+  liability;
+- it represents **multi-modal** zones natively;
+- new samples are appended in constant time, which is the prerequisite for any
+  future incremental learning;
+- its decisions are directly explainable — the contributing neighbours can be
+  named in a report.
+
+Linear discriminant analysis was the main alternative and is more
+statistically efficient (one pooled covariance, 55 parameters from 80 samples).
+It was not chosen because it shares the unimodality assumption, cannot be
+updated incrementally without a refit, and is less explainable. Storing raw
+samples keeps LDA available for future evaluation without further migration.
+
+## Consequences
+
+- The profile schema gains a version; profiles without stored samples remain
+  loadable and usable with Mahalanobis, and report k-NN as unavailable rather
+  than failing silently.
+- Profile size grows by roughly 80 × 10 doubles, which is negligible.
+- Two recognisers must be maintained during the comparison period.
+- Recognition remains deterministic, on-device, and free of any ML framework.
+
