@@ -64,6 +64,12 @@ public enum ZoneProfileGenerator {
         let acceptanceThreshold = threshold(
             from: finalDistances, multiplier: configuration.thresholdMultiplier)
 
+        // The retained samples are persisted alongside the statistics
+        // (ADR-015): the statistics are derived from them, and they cannot be
+        // recovered from the statistics.
+        let radius = neighbourRadius(
+            of: retained, multiplier: configuration.thresholdMultiplier)
+
         let profile = ZoneProfile(
             zone: zone,
             meanVector: MeanVector(values: finalMean),
@@ -71,9 +77,37 @@ public enum ZoneProfileGenerator {
             inverseCovarianceMatrix: InverseCovarianceMatrix(values: finalInverse),
             threshold: ThresholdModel(
                 acceptanceThreshold: acceptanceThreshold,
-                ambiguityMargin: configuration.ambiguityMargin)
+                ambiguityMargin: configuration.ambiguityMargin),
+            samples: retained,
+            neighbourRadius: radius
         )
         return .success(profile)
+    }
+
+    /// The zone's k-Nearest Neighbour acceptance radius
+    /// (`ALGORITHM` §17.23.7).
+    ///
+    /// Computed as `mean + k·σ` of the leave-one-out nearest-neighbour distances
+    /// within the zone, reusing the threshold formulation of §17.18 so no new
+    /// constant is introduced.
+    ///
+    /// - Parameters:
+    ///   - samples: The retained normalized samples for one zone.
+    ///   - multiplier: The `k` in `mean + k·σ`.
+    /// - Returns: The radius, or `nil` when fewer than two samples exist.
+    public static func neighbourRadius(of samples: [[Double]], multiplier: Double) -> Double? {
+        guard samples.count >= 2 else { return nil }
+        var nearest: [Double] = []
+        nearest.reserveCapacity(samples.count)
+        for (index, sample) in samples.enumerated() {
+            var best = Double.infinity
+            for (otherIndex, other) in samples.enumerated() where otherIndex != index {
+                best = Swift.min(best, EuclideanDistance.distance(sample, other))
+            }
+            if best.isFinite { nearest.append(best) }
+        }
+        guard !nearest.isEmpty else { return nil }
+        return threshold(from: nearest, multiplier: multiplier)
     }
 
     private static func invertRegularizedCovariance(
