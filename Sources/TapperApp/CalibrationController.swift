@@ -1,5 +1,6 @@
 import Audio
 import Calibration
+import Configuration
 import Detection
 import Diagnostics
 import Dispatch
@@ -55,9 +56,11 @@ final class CalibrationController: ObservableObject {
     /// The zones in the order they are collected.
     var zones: [InteractionZone] { InteractionZone.calibratable }
 
-    /// Rejection causes, most frequent first.
-    var rejectionBreakdown: [(reason: String, count: Int)] {
-        rejectionCounts.sorted { $0.value > $1.value }.map { (reason: $0.key, count: $0.value) }
+    /// Every attempt by cause, accepted first, with counts and percentages.
+    var breakdownLines: [String] {
+        var counts = rejectionCounts
+        counts["Accepted"] = accepted.values.reduce(0, +)
+        return OutcomeBreakdown.make(counts: counts).lines()
     }
 
     /// Starts guided calibration.
@@ -184,6 +187,7 @@ final class CalibrationController: ObservableObject {
                 do {
                     try self.composition.configuration.save(profile)
                     AppLog.calibration("Profile saved (\(profile.zones.count) zones)")
+                    self.writeReport(profileZones: profile.zones.count)
                     self.phase = .finished(zones: profile.zones.count)
                     self.message =
                         "Calibration complete. Profile saved for \(profile.zones.count) zones."
@@ -193,6 +197,7 @@ final class CalibrationController: ObservableObject {
                 }
             case .failure(let error):
                 AppLog.calibration("FAILED: \(error)")
+                self.writeReport(profileZones: 0, failure: String(describing: error))
                 self.phase = .failed(String(describing: error))
                 self.message = "Calibration failed: \(Self.describe(error)) Nothing was saved."
             }
@@ -222,6 +227,52 @@ final class CalibrationController: ObservableObject {
             } else {
                 self.message = "Accepted \(accepted) of \(self.samplesPerZone)."
             }
+        }
+    }
+
+    /// Writes the attempt breakdown so the calibration data survives the run.
+    ///
+    /// Reported only; nothing here adjusts any threshold.
+    private func writeReport(profileZones: Int, failure: String? = nil) {
+        var counts = rejectionCounts
+        let acceptedTotal = accepted.values.reduce(0, +)
+        counts["Accepted"] = acceptedTotal
+        let breakdown = OutcomeBreakdown.make(counts: counts)
+
+        var text = "Tapper — Calibration Report\n"
+        text += "generated: \(ISO8601DateFormatter().string(from: Date()))\n"
+        text += String(repeating: "=", count: 72) + "\n\n"
+        text +=
+            failure.map { "OUTCOME: failed — \($0)\n\n" }
+            ?? "OUTCOME: succeeded — profile saved for \(profileZones) zones\n\n"
+
+        text += "Accepted per zone (target \(samplesPerZone) each)\n"
+        text += String(repeating: "-", count: 72) + "\n"
+        for zone in zones {
+            text += "  \(zone.rawValue): \(accepted[zone] ?? 0)/\(samplesPerZone)\n"
+        }
+        text += "\n"
+
+        text += "Attempt breakdown (total \(breakdown.total) attempts)\n"
+        text += String(repeating: "-", count: 72) + "\n"
+        for line in breakdown.lines() { text += "  \(line)\n" }
+        text += "\n"
+        text += "The dominant non-accepted cause identifies which criterion rejects\n"
+        text += "natural taps. No threshold was changed by this run.\n"
+
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("TapperValidation", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            let stamp = ISO8601DateFormatter().string(from: Date())
+                .replacingOccurrences(of: ":", with: "-")
+            try AtomicFileStore(directory: directory)
+                .write(Data(text.utf8), to: "calibration-\(stamp).txt")
+            AppLog.calibration("Report written to \(directory.path)")
+            message += " Report written to ~/TapperValidation."
+        } catch {
+            AppLog.calibration("Report could not be written: \(error)")
         }
     }
 

@@ -157,12 +157,14 @@ final class ValidationController: ObservableObject {
 
                 // Preparation: show the target and let the operator get in place
                 // before any countdown starts.
+                let promptAt = Date()
                 publish(
                     .preparing(zone: zone, trial: repetition, of: timing.repetitions),
                     "Move to \(zone.rawValue).")
                 Thread.sleep(forTimeInterval: max(0, timing.preparationSeconds))
                 if cancellation.isCancelled { return }
 
+                let countdownAt = Date()
                 for remaining in stride(from: max(1, timing.countdownSeconds), through: 1, by: -1) {
                     publish(.countdown(zone: zone, remaining: remaining), "Get ready…")
                     Thread.sleep(forTimeInterval: 1.0)
@@ -172,9 +174,14 @@ final class ValidationController: ObservableObject {
                     "Tap \(zone.rawValue) now.")
                 if timing.audibleCue { playCue() }
                 recorder.reset()
+                let windowOpenedAt = Date()
                 Thread.sleep(forTimeInterval: max(0.1, timing.tapWindowSeconds))
+                let windowClosedAt = Date()
                 index += 1
-                let trial = recorder.makeTrial(index: index, expectedZone: zone)
+                let trial = recorder.makeTrial(
+                    index: index, expectedZone: zone, promptDisplayedAt: promptAt,
+                    countdownStartedAt: countdownAt, tapWindowOpenedAt: windowOpenedAt,
+                    tapWindowClosedAt: windowClosedAt)
                 trials.append(trial)
                 note(trial.outcome, completed: index)
             }
@@ -184,9 +191,13 @@ final class ValidationController: ObservableObject {
             if cancellation.isCancelled { return }
             publish(.idleRecording(secondsRemaining: second), "Do not tap. Type, speak, move.")
             recorder.reset()
+            let idleOpenedAt = Date()
             Thread.sleep(forTimeInterval: 1.0)
             index += 1
-            trials.append(recorder.makeTrial(index: index, expectedZone: nil))
+            trials.append(
+                recorder.makeTrial(
+                    index: index, expectedZone: nil, tapWindowOpenedAt: idleOpenedAt,
+                    tapWindowClosedAt: Date()))
         }
 
         export(
@@ -277,21 +288,39 @@ final class TrialRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var observations: [(outcome: FrameOutcome, latency: Double)] = []
     private var windowStart = Date()
+    private var firstActivity: Date?
+
+    /// When audio activity was first observed since the last ``reset()``.
+    var firstDetectedAudioAt: Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstActivity
+    }
 
     func reset() {
         lock.lock()
         observations.removeAll()
         windowStart = Date()
+        firstActivity = nil
         lock.unlock()
     }
 
     func observe(outcome: FrameOutcome, at timestamp: Date) {
         lock.lock()
         observations.append((outcome, timestamp.timeIntervalSince(windowStart) * 1000))
+        // Anything other than silence counts as audio activity, including a
+        // detected-then-rejected tap.
+        if firstActivity == nil, outcome != .noCandidate, outcome != .notListening {
+            firstActivity = timestamp
+        }
         lock.unlock()
     }
 
-    func makeTrial(index: Int, expectedZone: InteractionZone?) -> ValidationTrial {
+    func makeTrial(
+        index: Int, expectedZone: InteractionZone?, promptDisplayedAt: Date? = nil,
+        countdownStartedAt: Date? = nil, tapWindowOpenedAt: Date? = nil,
+        tapWindowClosedAt: Date? = nil
+    ) -> ValidationTrial {
         lock.lock()
         let observed = observations
         lock.unlock()
@@ -342,6 +371,8 @@ final class TrialRecorder: @unchecked Sendable {
             index: index, expectedZone: expectedZone?.rawValue, detectedZone: detectedZone,
             status: status, confidence: confidence, distance: distance,
             latencyMilliseconds: latency, outcome: outcomeLabel, succeeded: succeeded,
-            timestamp: Date())
+            timestamp: Date(), promptDisplayedAt: promptDisplayedAt,
+            countdownStartedAt: countdownStartedAt, tapWindowOpenedAt: tapWindowOpenedAt,
+            firstDetectedAudioAt: firstActivity, tapWindowClosedAt: tapWindowClosedAt)
     }
 }

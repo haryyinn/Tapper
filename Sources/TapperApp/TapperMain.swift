@@ -137,9 +137,8 @@ struct CalibrationView: View {
             if controller.retries > 0 {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("retries: \(controller.retries)").font(.caption).bold()
-                    ForEach(controller.rejectionBreakdown, id: \.reason) { entry in
-                        Text("  \(entry.reason): \(entry.count)").font(.caption)
-                            .foregroundStyle(.secondary)
+                    ForEach(controller.breakdownLines, id: \.self) { line in
+                        Text("  \(line)").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -161,7 +160,11 @@ struct CalibrationView: View {
         case .countdown(let zone, let remaining):
             Text("Tap \(zone.rawValue) in \(remaining)…").font(.title2).bold()
         case .listening(let zone):
-            Text("TAP \(zone.rawValue.uppercased()) NOW").font(.title2).bold()
+            Text("● TAP \(zone.rawValue.uppercased()) NOW")
+                .font(.title2).bold()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Color.green, in: RoundedRectangle(cornerRadius: 8))
         case .finished(let zones):
             Text("Complete — profile saved for \(zones) zones.").font(.title3).bold()
         case .failed:
@@ -255,7 +258,11 @@ struct ValidationView: View {
         case .countdown(let zone, let remaining):
             Text("Tap \(zone.rawValue) in \(remaining)…").font(.title2).bold()
         case .listening(let zone, let trial, let total):
-            Text("TAP \(zone.rawValue.uppercased()) NOW  (\(trial)/\(total))").font(.title2).bold()
+            Text("● TAP \(zone.rawValue.uppercased()) NOW  (\(trial)/\(total))")
+                .font(.title2).bold()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Color.green, in: RoundedRectangle(cornerRadius: 8))
         case .idleRecording(let seconds):
             Text("Idle recording — do not tap (\(seconds)s)").font(.title3).bold()
         case .finished:

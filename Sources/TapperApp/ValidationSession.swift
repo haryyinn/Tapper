@@ -39,6 +39,28 @@ struct ValidationTrial: Codable, Sendable {
 
     /// When the trial completed.
     let timestamp: Date
+
+    /// When the target zone was first shown to the operator.
+    let promptDisplayedAt: Date?
+
+    /// When the countdown began.
+    let countdownStartedAt: Date?
+
+    /// When the tap window opened ("TAP NOW").
+    let tapWindowOpenedAt: Date?
+
+    /// When audio activity was first observed inside the window, if any. The
+    /// interval from ``tapWindowOpenedAt`` is the operator's reaction time.
+    let firstDetectedAudioAt: Date?
+
+    /// When the tap window closed.
+    let tapWindowClosedAt: Date?
+
+    /// Operator reaction time in milliseconds, or `nil` if nothing was heard.
+    var reactionMilliseconds: Double? {
+        guard let opened = tapWindowOpenedAt, let heard = firstDetectedAudioAt else { return nil }
+        return heard.timeIntervalSince(opened) * 1000
+    }
 }
 
 /// A completed validation run.
@@ -134,7 +156,9 @@ enum ValidationExport {
     static func csv(_ run: ValidationRun) -> String {
         var lines = [
             "index,expected_zone,detected_zone,status,confidence,distance,"
-                + "latency_ms,outcome,succeeded,timestamp"
+                + "latency_ms,outcome,succeeded,timestamp,"
+                + "prompt_displayed_at,countdown_started_at,tap_window_opened_at,"
+                + "first_detected_audio_at,tap_window_closed_at,reaction_ms"
         ]
         let formatter = ISO8601DateFormatter()
         for trial in run.trials {
@@ -149,6 +173,12 @@ enum ValidationExport {
                 trial.outcome,
                 trial.succeeded ? "true" : "false",
                 formatter.string(from: trial.timestamp),
+                trial.promptDisplayedAt.map(formatter.string(from:)) ?? "",
+                trial.countdownStartedAt.map(formatter.string(from:)) ?? "",
+                trial.tapWindowOpenedAt.map(formatter.string(from:)) ?? "",
+                trial.firstDetectedAudioAt.map(formatter.string(from:)) ?? "",
+                trial.tapWindowClosedAt.map(formatter.string(from:)) ?? "",
+                trial.reactionMilliseconds.map { String(format: "%.1f", $0) } ?? "",
             ]
             lines.append(fields.joined(separator: ","))
         }
@@ -227,11 +257,76 @@ enum ValidationExport {
         }
         out += "\n"
 
+        out += "Operator reaction time (tap window open -> first audio)\n"
+        out += String(repeating: "-", count: 72) + "\n"
+        let reactions = run.trials.compactMap(\.reactionMilliseconds).sorted()
+        if reactions.isEmpty {
+            out += "  not measured\n"
+        } else {
+            let median = reactions[reactions.count / 2]
+            out += String(
+                format: "  median %6.0f ms   min %6.0f ms   max %6.0f ms   (n=%d)\n",
+                median, reactions[0], reactions[reactions.count - 1], reactions.count)
+            out += "  A long or missing reaction time means the trial measured the operator,\n"
+            out += "  not the recogniser. Increase the preparation delay or tap window.\n"
+        }
+        out += "\n"
+
+        out += "Outcome breakdown\n"
+        out += String(repeating: "-", count: 72) + "\n"
+        for line in OutcomeBreakdown.make(from: run.trials).lines() {
+            out += "  \(line)\n"
+        }
+        out += "\n"
+
         out += "Not covered by this run (measure separately, see VALIDATION.md)\n"
         out += String(repeating: "-", count: 72) + "\n"
         out += "  sustained CPU utilisation, memory behaviour, long-duration stability,\n"
         out += "  calibration success rate, capture-inclusive end-to-end latency,\n"
         out += "  sleep/wake and permission-change reliability.\n"
         return out
+    }
+}
+
+/// Counts outcomes by cause and formats them with percentages.
+///
+/// Used by both the validation report and the calibration report so a single
+/// presentation describes why attempts did not succeed.
+struct OutcomeBreakdown {
+
+    /// Ordered entries, most frequent first, with `accepted` always first.
+    let entries: [(label: String, count: Int)]
+
+    /// Total attempts represented.
+    let total: Int
+
+    /// Builds a breakdown from validation trials.
+    static func make(from trials: [ValidationTrial]) -> OutcomeBreakdown {
+        var counts: [String: Int] = [:]
+        for trial in trials {
+            let key = trial.succeeded ? "Accepted" : trial.outcome
+            counts[key, default: 0] += 1
+        }
+        return make(counts: counts)
+    }
+
+    /// Builds a breakdown from labelled counts.
+    static func make(counts: [String: Int]) -> OutcomeBreakdown {
+        let total = counts.values.reduce(0, +)
+        let accepted = counts.filter { $0.key == "Accepted" }
+        let rest = counts.filter { $0.key != "Accepted" }.sorted { $0.value > $1.value }
+        let ordered =
+            accepted.map { (label: $0.key, count: $0.value) }
+            + rest.map { (label: $0.key, count: $0.value) }
+        return OutcomeBreakdown(entries: ordered, total: total)
+    }
+
+    /// Formatted lines, each "Label: count (pp%)".
+    func lines() -> [String] {
+        guard total > 0 else { return ["no attempts recorded"] }
+        return entries.map { entry in
+            let percent = Double(entry.count) / Double(total) * 100
+            return String(format: "%@: %d (%.1f%%)", entry.label, entry.count, percent)
+        }
     }
 }
