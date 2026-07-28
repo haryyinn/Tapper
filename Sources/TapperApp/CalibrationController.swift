@@ -32,6 +32,11 @@ final class CalibrationController: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var accepted: [InteractionZone: Int] = [:]
     @Published private(set) var retries = 0
+
+    /// Why retries happened, counted by cause. This is the diagnostic that
+    /// identifies which criterion rejects natural taps; it is reported, never
+    /// acted on automatically.
+    @Published private(set) var rejectionCounts: [String: Int] = [:]
     @Published private(set) var message = "Not started."
     @Published private(set) var isRunning = false
 
@@ -49,6 +54,11 @@ final class CalibrationController: ObservableObject {
 
     /// The zones in the order they are collected.
     var zones: [InteractionZone] { InteractionZone.calibratable }
+
+    /// Rejection causes, most frequent first.
+    var rejectionBreakdown: [(reason: String, count: Int)] {
+        rejectionCounts.sorted { $0.value > $1.value }.map { (reason: $0.key, count: $0.value) }
+    }
 
     /// Starts guided calibration.
     func start() {
@@ -94,6 +104,7 @@ final class CalibrationController: ObservableObject {
         isRunning = true
         accepted = [:]
         retries = 0
+        rejectionCounts = [:]
         phase = .preparing
         message = "Settling the microphone..."
 
@@ -147,10 +158,14 @@ final class CalibrationController: ObservableObject {
                     record(zone: zone, accepted: acceptedInZone, note: nil)
                 case .rejected(let reason):
                     AppLog.calibration("Sample rejected: \(reason)")
-                    record(zone: zone, accepted: collected, note: "Not usable (\(reason)) — retry.")
+                    record(
+                        zone: zone, accepted: collected, note: "Not usable (\(reason)) — retry.",
+                        cause: String(describing: reason))
                 case .timedOut:
                     AppLog.calibration("No tap detected within timeout")
-                    record(zone: zone, accepted: collected, note: "No tap detected — retry.")
+                    record(
+                        zone: zone, accepted: collected, note: "No tap detected — retry.",
+                        cause: "notDetected(belowDetectionThreshold)")
                 case .notCollecting:
                     AppLog.calibration("STOPPED: session not collecting")
                     return
@@ -193,11 +208,16 @@ final class CalibrationController: ObservableObject {
         }
     }
 
-    private nonisolated func record(zone: InteractionZone, accepted: Int, note: String?) {
+    private nonisolated func record(
+        zone: InteractionZone, accepted: Int, note: String?, cause: String? = nil
+    ) {
         Task { @MainActor in
             self.accepted[zone] = accepted
             if let note {
                 self.retries += 1
+                if let cause {
+                    self.rejectionCounts[cause, default: 0] += 1
+                }
                 self.message = note
             } else {
                 self.message = "Accepted \(accepted) of \(self.samplesPerZone)."

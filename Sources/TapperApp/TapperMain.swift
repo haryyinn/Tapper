@@ -135,8 +135,13 @@ struct CalibrationView: View {
 
             Text(controller.message).font(.callout)
             if controller.retries > 0 {
-                Text("retries: \(controller.retries)").font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("retries: \(controller.retries)").font(.caption).bold()
+                    ForEach(controller.rejectionBreakdown, id: \.reason) { entry in
+                        Text("  \(entry.reason): \(entry.count)").font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             HStack {
@@ -191,6 +196,37 @@ struct ValidationView: View {
             Text("trials recorded: \(controller.completedTrials)").font(.caption)
                 .foregroundStyle(.secondary)
 
+            GroupBox("Pacing") {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Preparation")
+                        Slider(value: $controller.preparationSeconds, in: 0...10, step: 0.5)
+                        Text(String(format: "%.1fs", controller.preparationSeconds))
+                            .monospacedDigit()
+                    }
+                    GridRow {
+                        Text("Countdown")
+                        Stepper(
+                            "\(controller.countdownSeconds)s", value: $controller.countdownSeconds,
+                            in: 1...10)
+                        Text("")
+                    }
+                    GridRow {
+                        Text("Tap window")
+                        Slider(value: $controller.tapWindowSeconds, in: 0.4...5.0, step: 0.1)
+                        Text(String(format: "%.1fs", controller.tapWindowSeconds))
+                            .monospacedDigit()
+                    }
+                    GridRow {
+                        Text("Audible cue")
+                        Toggle("", isOn: $controller.audibleCue).labelsHidden()
+                        Text("")
+                    }
+                }
+                .font(.caption)
+                .disabled(controller.isRunning)
+            }
+
             HStack {
                 Button("Start Validation") { controller.start() }
                     .disabled(controller.isRunning)
@@ -213,6 +249,9 @@ struct ValidationView: View {
 
     @ViewBuilder private var promptView: some View {
         switch controller.phase {
+        case .preparing(let zone, let trial, let total):
+            Text("Next: \(zone.rawValue)  (\(trial)/\(total))").font(.title2).bold()
+                .foregroundStyle(.secondary)
         case .countdown(let zone, let remaining):
             Text("Tap \(zone.rawValue) in \(remaining)…").font(.title2).bold()
         case .listening(let zone, let trial, let total):

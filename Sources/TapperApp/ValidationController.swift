@@ -1,3 +1,4 @@
+import AppKit
 import Audio
 import Calibration
 import Classification
@@ -18,6 +19,7 @@ final class ValidationController: ObservableObject {
 
     enum Phase: Equatable {
         case idle
+        case preparing(zone: InteractionZone, trial: Int, of: Int)
         case countdown(zone: InteractionZone, remaining: Int)
         case listening(zone: InteractionZone, trial: Int, of: Int)
         case idleRecording(secondsRemaining: Int)
@@ -32,10 +34,23 @@ final class ValidationController: ObservableObject {
     @Published private(set) var report: String?
 
     /// Taps collected per zone.
-    var repetitions = 25
+    @Published var repetitions = 25
 
     /// Seconds of idle recording, each counted as one false-positive opportunity.
-    var idleSeconds = 60
+    @Published var idleSeconds = 60
+
+    /// Pause after the target zone is shown, before the countdown begins, giving
+    /// the operator time to move into position.
+    @Published var preparationSeconds = 2.0
+
+    /// Length of the spoken-style countdown before each tap.
+    @Published var countdownSeconds = 3
+
+    /// How long the recorder listens for the tap after "TAP NOW".
+    @Published var tapWindowSeconds = 1.2
+
+    /// Play a short cue when the tap window opens.
+    @Published var audibleCue = true
 
     private let composition: AppComposition
     private let queue = DispatchQueue(label: "com.tapper.validation-ui", qos: .userInitiated)
@@ -98,11 +113,13 @@ final class ValidationController: ObservableObject {
         report = nil
         message = "Starting..."
 
-        let reps = repetitions
-        let idle = idleSeconds
+        let timing = Timing(
+            repetitions: repetitions, idleSeconds: idleSeconds,
+            preparationSeconds: preparationSeconds, countdownSeconds: countdownSeconds,
+            tapWindowSeconds: tapWindowSeconds, audibleCue: audibleCue)
         let flag = cancellation
         queue.async { [weak self] in
-            self?.run(recorder: recorder, repetitions: reps, idleSeconds: idle, cancellation: flag)
+            self?.run(recorder: recorder, timing: timing, cancellation: flag)
         }
     }
 
@@ -117,26 +134,45 @@ final class ValidationController: ObservableObject {
 
     // MARK: Run loop (background queue)
 
+    /// Immutable per-run pacing, captured when the run starts.
+    struct Timing: Sendable {
+        let repetitions: Int
+        let idleSeconds: Int
+        let preparationSeconds: Double
+        let countdownSeconds: Int
+        let tapWindowSeconds: Double
+        let audibleCue: Bool
+    }
+
     private nonisolated func run(
-        recorder: TrialRecorder, repetitions: Int, idleSeconds: Int,
-        cancellation: CancellationFlag
+        recorder: TrialRecorder, timing: Timing, cancellation: CancellationFlag
     ) {
         var trials: [ValidationTrial] = []
         var index = 0
         let startedAt = Date()
 
         for zone in InteractionZone.calibratable {
-            for repetition in 1...max(1, repetitions) {
+            for repetition in 1...max(1, timing.repetitions) {
                 if cancellation.isCancelled { return }
-                for remaining in stride(from: 3, through: 1, by: -1) {
-                    publish(.countdown(zone: zone, remaining: remaining), "Get ready.")
+
+                // Preparation: show the target and let the operator get in place
+                // before any countdown starts.
+                publish(
+                    .preparing(zone: zone, trial: repetition, of: timing.repetitions),
+                    "Move to \(zone.rawValue).")
+                Thread.sleep(forTimeInterval: max(0, timing.preparationSeconds))
+                if cancellation.isCancelled { return }
+
+                for remaining in stride(from: max(1, timing.countdownSeconds), through: 1, by: -1) {
+                    publish(.countdown(zone: zone, remaining: remaining), "Get ready…")
                     Thread.sleep(forTimeInterval: 1.0)
                 }
                 publish(
-                    .listening(zone: zone, trial: repetition, of: repetitions),
+                    .listening(zone: zone, trial: repetition, of: timing.repetitions),
                     "Tap \(zone.rawValue) now.")
+                if timing.audibleCue { playCue() }
                 recorder.reset()
-                Thread.sleep(forTimeInterval: 0.8)
+                Thread.sleep(forTimeInterval: max(0.1, timing.tapWindowSeconds))
                 index += 1
                 let trial = recorder.makeTrial(index: index, expectedZone: zone)
                 trials.append(trial)
@@ -144,7 +180,7 @@ final class ValidationController: ObservableObject {
             }
         }
 
-        for second in stride(from: max(1, idleSeconds), through: 1, by: -1) {
+        for second in stride(from: max(1, timing.idleSeconds), through: 1, by: -1) {
             if cancellation.isCancelled { return }
             publish(.idleRecording(secondsRemaining: second), "Do not tap. Type, speak, move.")
             recorder.reset()
@@ -192,6 +228,17 @@ final class ValidationController: ObservableObject {
             }
             self.teardown()
             self.isRunning = false
+        }
+    }
+
+    /// A short, distinct cue marking the moment the tap window opens.
+    private nonisolated func playCue() {
+        Task { @MainActor in
+            if let sound = NSSound(named: "Tink") {
+                sound.play()
+            } else {
+                NSSound.beep()
+            }
         }
     }
 
