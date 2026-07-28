@@ -286,3 +286,35 @@ interface, and Diagnostics does not depend on Runtime.
   string columns, but nothing prevents the pattern returning.
 - **Action:** extract the pure reporting types into a testable library target,
   or add a test target able to import the app module.
+
+### BL-16 — Acceptance radius formula is analytical, not measured
+
+- **Status:** Open (instrumented; awaiting hardware data).
+- **Origin:** ADR-016 §3.
+- **What:** Both acceptance radii — `ALGORITHM` §17.23.6 for k-NN and §17.24.3
+  for nearest centroid — use `mean + k·σ` because it mirrors the existing
+  threshold formulation, not because it was measured against real taps.
+- **Instrumentation in place:** every validation trial records, per recogniser,
+  the distance computed, the radius tested against, their difference, whether
+  the tap was accepted, and the confidence. The report summarises accepted
+  margins and rejection overshoots; the CSV carries one row per trial per
+  recogniser.
+- **What the data would show:** margins clustered near zero mean the radius sits
+  right on top of the decisions it governs, so small changes in tap technique
+  flip outcomes. Large positive margins with many rejections would instead point
+  at the distance metric rather than the radius.
+- **Action:** once hardware runs exist, decide the formula from the margin
+  distributions. Do not change it before then.
+
+### BL-17 — Benchmark latency is measured in a debug build
+
+- **Status:** Open (minor).
+- **Origin:** Recogniser benchmark.
+- **What:** `RecogniserBenchmark` times each recogniser per tap, but validation
+  runs from the debug configuration by default, where the figures are inflated
+  and not comparable to release performance. The first measurement of a run also
+  carries one-time warm-up cost.
+- **Impact:** latency comparisons *between* recognisers in one run remain
+  meaningful, since all are measured the same way. Absolute figures are not.
+- **Action:** state the build configuration in the report, and take any absolute
+  latency claim from a release build.
