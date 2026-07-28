@@ -105,6 +105,26 @@ final class ValidationController: ObservableObject {
             recorder.observe(outcome: outcome, at: timestamp)
         }
 
+        // Both recognisers classify the same feature vector: the candidate
+        // observer fires with exactly the vector production is about to
+        // classify, so a difference between them is attributable to the
+        // recogniser alone (ADR-015). Measurement only — the k-NN verdict is
+        // recorded and never acted on, and the engine's behaviour is unchanged.
+        let comparison = RecogniserComparison()
+        let zones = profile.zones
+        let normalization = profile.normalization
+        engine.setCandidateObserver { featureVector, timestamp in
+            recorder.observe(
+                comparison: comparison.compare(
+                    featureVector: featureVector, profiles: zones,
+                    normalization: normalization, at: timestamp))
+        }
+        if !zones.contains(where: \.supportsNearestNeighbour) {
+            AppLog.validation(
+                "k-NN unavailable: profile predates ADR-015 (no labelled samples). "
+                    + "Mahalanobis results are unaffected.")
+        }
+
         self.engine = engine
         self.captureSource = source
         cancellation.reset()
@@ -290,6 +310,9 @@ final class TrialRecorder: @unchecked Sendable {
     private var windowStart = Date()
     private var firstActivity: Date?
 
+    /// Comparison results for candidates seen in the current window.
+    private var comparisons: [RecogniserComparison.Result] = []
+
     /// When audio activity was first observed since the last ``reset()``.
     var firstDetectedAudioAt: Date? {
         lock.lock()
@@ -300,8 +323,16 @@ final class TrialRecorder: @unchecked Sendable {
     func reset() {
         lock.lock()
         observations.removeAll()
+        comparisons.removeAll()
         windowStart = Date()
         firstActivity = nil
+        lock.unlock()
+    }
+
+    /// Records a dual-recogniser comparison for a candidate in this window.
+    func observe(comparison: RecogniserComparison.Result) {
+        lock.lock()
+        comparisons.append(comparison)
         lock.unlock()
     }
 
@@ -323,6 +354,10 @@ final class TrialRecorder: @unchecked Sendable {
     ) -> ValidationTrial {
         lock.lock()
         let observed = observations
+        // The last comparison corresponds to the last frame that reached
+        // classification, which is the frame the loop below reports. Both
+        // therefore describe the same tap.
+        let comparison = comparisons.last
         lock.unlock()
 
         var detectedZone: String?
@@ -367,12 +402,27 @@ final class TrialRecorder: @unchecked Sendable {
         let succeeded =
             expectedZone.map { detectedZone == $0.rawValue } ?? (detectedZone == nil)
 
+        // `nil` when no candidate was classified, or when the profile carries
+        // no labelled samples — reported as "not evaluated", never as a k-NN
+        // failure.
+        let verdict = comparison?.nearestNeighbour.map { outcome in
+            TrialVerdict(
+                zone: outcome.status == .success ? outcome.zone.rawValue : nil,
+                status: String(describing: outcome.status),
+                confidence: outcome.confidence,
+                distance: outcome.distance,
+                neighbours: (comparison?.neighbours ?? []).map {
+                    String(format: "%@@%.4f", $0.zone.rawValue, $0.distance)
+                })
+        }
+
         return ValidationTrial(
             index: index, expectedZone: expectedZone?.rawValue, detectedZone: detectedZone,
             status: status, confidence: confidence, distance: distance,
             latencyMilliseconds: latency, outcome: outcomeLabel, succeeded: succeeded,
             timestamp: Date(), promptDisplayedAt: promptDisplayedAt,
             countdownStartedAt: countdownStartedAt, tapWindowOpenedAt: tapWindowOpenedAt,
-            firstDetectedAudioAt: firstActivity, tapWindowClosedAt: tapWindowClosedAt)
+            firstDetectedAudioAt: firstActivity, tapWindowClosedAt: tapWindowClosedAt,
+            nearestNeighbour: verdict, voteMargin: comparison?.voteMargin)
     }
 }

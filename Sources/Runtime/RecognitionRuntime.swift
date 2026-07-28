@@ -62,6 +62,14 @@ public struct RecognitionRuntime {
     private let logger: DiagnosticsLogger?
     private let recognitionLog: RecognitionLog?
 
+    /// Optional observer for the feature vector of every validated candidate.
+    ///
+    /// Instrumentation only, for validation tooling that needs to evaluate an
+    /// alternative recogniser on exactly the vector production classified
+    /// (ADR-015). It is `nil` by default, is called after the candidate is
+    /// final and before classification, and cannot alter the frame's outcome.
+    public var candidateObserver: (@Sendable (FeatureVector, Date) -> Void)?
+
     /// Creates a recognition runtime.
     ///
     /// - Parameters:
@@ -116,6 +124,7 @@ public struct RecognitionRuntime {
             return .candidateRejected(reason)
 
         case .candidate(let candidate):
+            candidateObserver?(candidate.featureVector, timestamp)
             return classifyAndDispatch(candidate.featureVector, at: timestamp)
         }
     }

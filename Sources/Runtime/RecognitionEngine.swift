@@ -1,4 +1,5 @@
 import Audio
+import Features
 import Foundation
 import os
 
@@ -67,6 +68,18 @@ public final class RecognitionEngine: @unchecked Sendable {
     /// - Parameter observer: The observer, or `nil` to remove it.
     public func setFrameObserver(_ observer: FrameObserver?) {
         state.withLockUnchecked { $0.observer = observer }
+    }
+
+    /// Sets an observer notified with the feature vector of every validated
+    /// candidate, before it is classified.
+    ///
+    /// Instrumentation for validation tooling that evaluates an alternative
+    /// recogniser on exactly the vector production classified (ADR-015). Like
+    /// ``setFrameObserver(_:)`` it cannot alter the outcome.
+    ///
+    /// - Parameter observer: The observer, or `nil` to remove it.
+    public func setCandidateObserver(_ observer: (@Sendable (FeatureVector, Date) -> Void)?) {
+        state.withLockUnchecked { $0.runtime.candidateObserver = observer }
     }
 
     /// Starts the recognition worker.
