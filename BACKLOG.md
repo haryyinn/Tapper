@@ -249,3 +249,40 @@ interface, and Diagnostics does not depend on Runtime.
   specified for timestamps, or whether whole-second precision is intended.
   Documentation decision; the implementation follows the documented format and
   is not changed unilaterally.
+
+## Recognition (ADR-015 / Track B)
+
+### BL-14 — §17.23.7 does not say which ambiguity margin k-NN uses
+
+- **Status:** Open (documentation decision; blocks nothing).
+- **Origin:** k-NN recogniser implementation.
+- **What:** `ALGORITHM` §17.23.7 requires the winning zone's vote weight to
+  exceed the runner-up's "by at least the configured ambiguity margin,
+  expressed as a fraction of the total weight". It does not say whether this is
+  the profile's existing `ThresholdModel.ambiguityMargin` or a new constant.
+  The two carry incompatible units: the profile's value is an absolute
+  Mahalanobis distance difference (0.5, per the Phase 4 decision), whereas the
+  k-NN margin is a dimensionless share of vote weight.
+- **Current implementation:** `NearestNeighbourConstants.voteMargin = 0.10`, a
+  separate constant, so no value is reused across units. It is an explicit
+  parameter of the classifier and is recorded in every comparison result and in
+  the validation CSV, so any figure can be traced back.
+- **Action:** confirm the intended source and value. 0.10 was chosen as a
+  permissive starting point that rejects only near-ties; it has no empirical
+  basis yet and should be set from validation evidence, not preference.
+
+### BL-15 — Report and summary logic has no automated test coverage
+
+- **Status:** Open.
+- **Origin:** Dual-recogniser reporting.
+- **What:** `ValidationSession.swift` (summaries, confusion matrices, the
+  recogniser-comparison section, CSV export) lives in the `TapperApp`
+  executable target, which has no test target, so none of it is covered by
+  XCTest. It was verified by compiling the real source against a synthetic run
+  with hand-checked counts, but that check is not part of CI.
+- **Why it matters:** a latent crash was found this way — a Swift `String`
+  passed to a `%s` conversion, which reads it as a C string pointer. Formatting
+  in this file is now done with padding helpers rather than `%s` for
+  string columns, but nothing prevents the pattern returning.
+- **Action:** extract the pure reporting types into a testable library target,
+  or add a test target able to import the app module.
