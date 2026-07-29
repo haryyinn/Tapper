@@ -46,8 +46,22 @@ final class ValidationController: ObservableObject {
     /// Length of the spoken-style countdown before each tap.
     @Published var countdownSeconds = 3
 
-    /// How long the recorder listens for the tap after "TAP NOW".
-    @Published var tapWindowSeconds = 1.2
+    /// How long the recorder waits for a tap after "TAP NOW", in seconds.
+    ///
+    /// This is a **timeout**, not a fixed window: the trial ends shortly after
+    /// audio is heard, so a generous value costs nothing on trials where the
+    /// operator taps promptly.
+    ///
+    /// The previous fixed 1.2 s window was shorter than the operator's observed
+    /// reaction time (median 771 ms, max 1168 ms — itself censored by the very
+    /// window that measured it), so taps landed after the window closed and were
+    /// recorded as recognition failures. Sizing a limit from a measurement that
+    /// the limit truncates is the same error ADR-017 corrects in the signal path.
+    @Published var tapWindowSeconds = 4.0
+
+    /// How long to keep listening after audio is first heard, so the frames that
+    /// classify the tap are still observed before the trial closes.
+    @Published var settleSeconds = 0.5
 
     /// Play a short cue when the tap window opens.
     @Published var audibleCue = true
@@ -141,7 +155,8 @@ final class ValidationController: ObservableObject {
         let timing = Timing(
             repetitions: repetitions, idleSeconds: idleSeconds,
             preparationSeconds: preparationSeconds, countdownSeconds: countdownSeconds,
-            tapWindowSeconds: tapWindowSeconds, audibleCue: audibleCue)
+            tapWindowSeconds: tapWindowSeconds, settleSeconds: settleSeconds,
+            audibleCue: audibleCue)
         let flag = cancellation
         queue.async { [weak self] in
             self?.run(recorder: recorder, timing: timing, cancellation: flag)
@@ -166,7 +181,28 @@ final class ValidationController: ObservableObject {
         let preparationSeconds: Double
         let countdownSeconds: Int
         let tapWindowSeconds: Double
+        let settleSeconds: Double
         let audibleCue: Bool
+    }
+
+    /// Waits for the operator's tap, returning as soon as one is heard.
+    ///
+    /// Delegates the policy to ``TapWindowPolicy`` so the timing rule is
+    /// testable without real time; this method only supplies the clock, the
+    /// recorder and the sleep.
+    ///
+    /// - Returns: When the window closed, and how.
+    private nonisolated func awaitTap(
+        recorder: TrialRecorder, timing: Timing, cancellation: CancellationFlag
+    ) -> (closedAt: Date, closure: TapWindowPolicy.Closure) {
+        let policy = TapWindowPolicy(
+            timeout: timing.tapWindowSeconds, settle: timing.settleSeconds)
+        let closure = policy.wait(
+            now: { Date() },
+            heardAudio: { recorder.firstDetectedAudioAt != nil },
+            isCancelled: { cancellation.isCancelled },
+            sleep: { Thread.sleep(forTimeInterval: $0) })
+        return (Date(), closure)
     }
 
     private nonisolated func run(
@@ -200,8 +236,8 @@ final class ValidationController: ObservableObject {
                 if timing.audibleCue { playCue() }
                 recorder.reset()
                 let windowOpenedAt = Date()
-                Thread.sleep(forTimeInterval: max(0.1, timing.tapWindowSeconds))
-                let windowClosedAt = Date()
+                let (windowClosedAt, _) = awaitTap(
+                    recorder: recorder, timing: timing, cancellation: cancellation)
                 index += 1
                 let trial = recorder.makeTrial(
                     index: index, expectedZone: zone, promptDisplayedAt: promptAt,
@@ -343,8 +379,13 @@ final class TrialRecorder: @unchecked Sendable {
     }
 
     func observe(outcome: FrameOutcome, at timestamp: Date) {
+        // Processing latency: the frame was read from the ring buffer at
+        // `timestamp` and its outcome is being delivered now. Measured before
+        // taking the lock so contention is not counted as processing time.
+        let latency = Date().timeIntervalSince(timestamp) * 1000
+
         lock.lock()
-        observations.append((outcome, timestamp.timeIntervalSince(windowStart) * 1000))
+        observations.append((outcome, latency))
         // Anything other than silence counts as audio activity, including a
         // detected-then-rejected tap.
         if firstActivity == nil, outcome != .noCandidate, outcome != .notListening {
@@ -371,7 +412,9 @@ final class TrialRecorder: @unchecked Sendable {
         var confidence: Double?
         var distance: Double?
         var outcomeLabel = "noCandidate"
-        var latency = 0.0
+        // nil until a frame reaches a decision, so trials with no candidate
+        // contribute no latency sample rather than a spurious zero.
+        var latency: Double?
 
         for entry in observed {
             switch entry.outcome {

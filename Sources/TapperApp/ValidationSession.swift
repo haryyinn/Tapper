@@ -74,8 +74,15 @@ struct ValidationTrial: Codable, Sendable {
     /// The Mahalanobis distance, if classified.
     let distance: Double?
 
-    /// Processing latency for the frame, in milliseconds.
-    let latencyMilliseconds: Double
+    /// Processing latency for the decisive frame, in milliseconds: the interval
+    /// from the frame being read out of the ring buffer to its outcome being
+    /// delivered.
+    ///
+    /// `nil` when no frame reached a decision, so trials without a candidate do
+    /// not contribute a spurious zero. A previous version recorded time since
+    /// the tap window opened, which is dominated by operator reaction time and
+    /// is not a latency at all.
+    let latencyMilliseconds: Double?
 
     /// The runtime's outcome for the frame.
     let outcome: String
@@ -219,7 +226,7 @@ struct ValidationSummary {
             overallCorrect: tapTrials.filter(\.succeeded).count,
             idleOpportunities: idleTrials.count,
             falsePositives: idleTrials.filter { !$0.succeeded }.count,
-            latencies: trials.map(\.latencyMilliseconds)
+            latencies: trials.compactMap(\.latencyMilliseconds)
         )
     }
 }
@@ -426,7 +433,7 @@ enum ValidationExport {
                 trial.status ?? "",
                 trial.confidence.map { String(format: "%.4f", $0) } ?? "",
                 trial.distance.map { String(format: "%.6f", $0) } ?? "",
-                String(format: "%.4f", trial.latencyMilliseconds),
+                trial.latencyMilliseconds.map { String(format: "%.4f", $0) } ?? "",
                 trial.outcome,
                 trial.succeeded ? "true" : "false",
                 formatter.string(from: trial.timestamp),
@@ -685,29 +692,41 @@ enum ValidationExport {
         }
         out += "\n"
 
-        out += "Processing latency (frame → dispatch; excludes audio capture)\n"
+        out += "Processing latency (ring-buffer read → outcome; excludes capture)\n"
         out += String(repeating: "-", count: 72) + "\n"
         if let median = summary.medianLatency, let p95 = summary.p95Latency {
             out += String(
-                format: "  median %7.3f ms    p95 %7.3f ms    target ≤200 ms: %@\n", median, p95,
-                p95 <= 200 ? "MET" : "NOT MET")
+                format: "  median %7.3f ms    p95 %7.3f ms    target ≤200 ms: %@   (n=%d)\n",
+                median, p95, p95 <= 200 ? "MET" : "NOT MET", summary.latencies.count)
+            out += "  Trials where no frame reached a decision contribute no sample, rather\n"
+            out += "  than a zero. Debug builds are not representative (BACKLOG BL-17).\n"
         } else {
-            out += "  not measured\n"
+            out += "  not measured — no frame reached a decision\n"
         }
         out += "\n"
 
         out += "Operator reaction time (tap window open -> first audio)\n"
         out += String(repeating: "-", count: 72) + "\n"
-        let reactions = run.trials.compactMap(\.reactionMilliseconds).sorted()
+        let taps = run.trials.filter { $0.expectedZone != nil }
+        let reactions = taps.compactMap(\.reactionMilliseconds).sorted()
+        let silent = taps.filter { $0.firstDetectedAudioAt == nil }.count
         if reactions.isEmpty {
             out += "  not measured\n"
         } else {
             let median = reactions[reactions.count / 2]
             out += String(
-                format: "  median %6.0f ms   min %6.0f ms   max %6.0f ms   (n=%d)\n",
-                median, reactions[0], reactions[reactions.count - 1], reactions.count)
-            out += "  A long or missing reaction time means the trial measured the operator,\n"
-            out += "  not the recogniser. Increase the preparation delay or tap window.\n"
+                format: "  median %6.0f ms   min %6.0f ms   max %6.0f ms   (n=%d of %d taps)\n",
+                median, reactions[0], reactions[reactions.count - 1], reactions.count, taps.count)
+            out += String(
+                format: "  no audio heard before timeout: %d of %d  (%.1f%%)\n",
+                silent, taps.count,
+                taps.isEmpty ? 0 : Double(silent) / Double(taps.count) * 100)
+            out += "\n"
+            out += "  The tap window is a timeout that closes early once audio is heard, so a\n"
+            out += "  reaction time near the timeout is not truncated by it. A non-trivial\n"
+            out += "  silent rate means taps are being missed before recognition is reached,\n"
+            out += "  and the accuracy figures above measure the operator as much as the\n"
+            out += "  recogniser.\n"
         }
         out += "\n"
 

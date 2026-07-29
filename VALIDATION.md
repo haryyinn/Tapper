@@ -81,15 +81,29 @@ is then usable with no further setup.
 
 ### 4. Measure accuracy and false positives
 
-```bash
-build/Tapper.app/Contents/MacOS/Tapper --validate --reps 25 --idle 300
-```
+Run the **Validation** tab in the application. (The former `--validate`
+command-line flag was removed: macOS attributes microphone access to the
+launched bundle, not to a binary executed from a terminal.)
 
 The harness prompts for each tap, labels the expected zone automatically, and
 records the detected zone, classification outcome, confidence, distance, and
 latency — so no manual counting is required. The idle phase records
 false-positive opportunities: during it, do **not** tap deliberately, but do
 type, speak, use the trackpad, move the laptop, and connect the charger.
+
+**Trial timing.** The tap window is a *timeout that closes early*: the trial
+ends shortly after audio is heard, so the default 4 s costs nothing when the
+operator taps promptly. It replaced a fixed 1.2 s window, which was shorter
+than the observed reaction time (median 771 ms, maximum 1168 ms — itself
+censored by that window), so late taps were recorded as recognition failures.
+The report states how many trials heard no audio at all: a non-trivial figure
+there means the accuracy numbers are measuring the operator, not the
+recogniser.
+
+**Latency.** Reported as the interval from a frame being read out of the ring
+buffer to its outcome being delivered. Trials where no frame reached a decision
+contribute no sample rather than a zero. Debug builds are not representative
+(`BACKLOG` BL-17).
 
 Results are written to `~/TapperValidation/` as CSV, JSON, and a report that
 compares each measurement against its documented target. `--reps 100` gives a

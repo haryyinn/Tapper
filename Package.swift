@@ -77,6 +77,7 @@ let package = Package(
             dependencies: ["Classification", "Calibration", "Features"]
         ),
         .testTarget(name: "CommandsTests", dependencies: ["Commands"]),
+        .testTarget(name: "TapperAppTests", dependencies: ["TapperApp"]),
         .testTarget(
             name: "ConfigurationTests",
             dependencies: ["Configuration", "Calibration", "Commands"]
