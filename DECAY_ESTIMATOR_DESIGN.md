@@ -398,14 +398,85 @@ decline on pure noise, on short decay, and on too-few points; the exact constant
 
 ---
 
-## Open questions for review
+## Resolved questions
 
-1. **Fit range −5 to −25 dB.** Standard practice (ISO 3382 T20) and it works,
-   but on this hardware the achievable range is unknown until real events are
-   captured. Should it be fixed, or derived alongside the extraction window?
-2. **Quality gate r² ≥ 0.99, range ≥ 15 dB.** Chosen from §2.1. It admits ~10%
-   error near the boundary. Tighter costs samples; looser admits error.
-3. **Slot 8.** With slot 9 as τ, slot 8's replacement is still open. §2.8
-   suggests an early/late rate ratio would be informative and is not a function
-   of τ alone — but that edges toward a feature change. The collinearity gate in
-   the plan (|r| > 0.95) is the intended safeguard.
+### 1. Fit range — **fixed at −5 dB to −25 dB**
+
+Measured, and the recommendation is the fixed range.
+
+**No accuracy benefit from deriving it.** For a single exponential the estimate
+is range-invariant, as theory requires — τ spans 15.002 to 15.102 ms (0.7%)
+across six different ranges. For a realistic multi-modal decay the standard
+ranges agree to 0.3% (39.892 to 40.005 ms); only a range starting at 0 dB,
+which includes the attack peak, biases the result (38.605 ms).
+
+**Deriving it would hide a systematic drift rather than remove it.** When the
+achievable range shrinks with noise, the reported τ drifts upward:
+
+| SNR (dB) | achievable range | reported τ |
+|---|---|---|
+| 64.9 | 20.0 dB | 39.980 ms |
+| 44.9 | 20.0 dB | 40.160 ms |
+| 32.8 | 17.6 dB | 42.276 ms |
+| 24.9 | 10.6 dB | 45.501 ms |
+
+That is a +14% drift at 25 dB SNR. With a **fixed nominal range**, this drift is
+*detectable*: `fitRangeDB` falls below 20 and the sample is flagged censored.
+With a **derived range**, the estimator would report "I used the best range
+available" and the drift would be invisible — the same class of error as
+comparing a censored duration against a ceiling.
+
+**Distinction worth preserving.** The estimator already has an adaptive *floor*:
+the lower bound is `max(peak − 25 dB, noiseFloor + 5 dB)`. That is not a derived
+range — it is a fixed target with a safety floor, and any shortfall is recorded
+in `fitRangeDB`. Fixed target, recorded shortfall.
+
+**Consequences:** deterministic, reproducible between calibrations, and it does
+not complicate detector-parameter derivation, because every sample's τ is
+computed the same way and its reliability is carried alongside it.
+
+### 2. Quality gate — **r² ≥ 0.99 and fitRangeDB ≥ 15 dB**
+
+**These thresholds are empirical, not theoretically motivated.** They come from
+sweeping both against a population of 238 estimates (τ ∈ {5,10,15,20,30,40} ms ×
+SNR ∈ {60,48,40,34,30,24,18} dB × 6 seeds), of which 42% were bad, defining bad
+as absolute error above 10%:
+
+| r² min | range min | accepted | false accept | false reject | good kept |
+|---|---|---|---|---|---|
+| 0.95 | 15 dB | 144 | 8 (5.6%) | 2 (2.1%) | 98.6% |
+| 0.98 | 15 dB | 142 | 6 (4.2%) | 2 (2.1%) | 98.6% |
+| **0.99** | **15 dB** | **130** | **0 (0.0%)** | **8 (7.4%)** | **94.2%** |
+| 0.99 | 0 dB | 132 | 2 (1.5%) | 8 (7.5%) | 94.2% |
+| 0.995 | 15 dB | 104 | 0 (0.0%) | 34 (25.4%) | 75.4% |
+| 0.999 | any | 0 | — | 138 (58.0%) | 0.0% |
+
+**Why r² ≥ 0.99.** It is the knee. It is the loosest threshold reaching zero
+false acceptance, while retaining 94.2% of good estimates. Tightening to 0.995
+costs a further 19 percentage points of good samples and buys nothing — false
+acceptance is already zero. Loosening to 0.98 admits 4.2% bad estimates.
+
+**Why 15 dB.** At r² ≥ 0.99, requiring 15 dB takes false acceptance from 2
+samples to 0 at no cost in good samples retained (94.2% either way). The range
+criterion catches the failures r² alone misses.
+
+**Sensitivity.** The gate is sharp between 0.98 and 0.995 — accepted counts fall
+from 142 to 104 across that interval — so 0.99 sits on a slope, not a plateau.
+A shift of ±0.005 moves the accepted fraction by roughly 10 percentage points.
+This should be re-measured against real hardware data at CP-2 rather than
+treated as settled.
+
+**Limits of the gate.** The population is synthetic single-exponential signals.
+The gate does **not** protect against the multi-modal case of §2.8, where r²
+stays above 0.998 while the estimator reports only the dominant surviving mode.
+It detects noise and truncation, not model misspecification.
+
+### 3. Slot 8 — **unchanged during Phase 1**
+
+Decided: Phase 1 improves measurement, Phase 2 improves representation.
+Temporary feature correlation is preferable to introducing a new feature before
+the measurement architecture is validated.
+
+Telemetry continues to be collected. If the collinearity gate (|r| > 0.95
+between slots 8 and 9) is exceeded, it is documented and the evidence presented
+before any feature definition changes.
