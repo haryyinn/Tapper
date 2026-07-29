@@ -4,7 +4,7 @@ Implements ADR-017. Split into phases so that **one variable changes at a time**
 
 | Phase | Question it answers | Feature dimension |
 |---|---|---|
-| **0** | What is the honest "before" number? | 10 (unchanged, defective) |
+| **0** | Can the harness measure an outcome at all? | 10 (unchanged, defective) |
 | **1** | Did fixing the *measurement* improve Tapper? | 10 (unchanged) |
 | **2** | Do better *features* improve recognition further? | may increase |
 
@@ -48,15 +48,33 @@ ADR-017 corrects at the level of the signal.
    (frame → dispatch)". Trials with no candidate contribute 0.0, which is why
    the median reads 0.000 ms. The figure measures neither quantity.
 
-**Work:** widen and/or adapt the tap window from observed reaction times; measure
-processing latency from frame receipt to outcome; relabel. No detector constant,
-no feature, no recogniser touched.
+**Work:** adapt the tap window to observed reaction times; measure processing
+latency from frame receipt to outcome; relabel. No detector constant, no
+feature, no recogniser touched.
 
-**Deliverable:** one hardware run producing a **trustworthy baseline** under the
-current (defective) measurement. This is the denominator for Phase 1.
+**Scope: harness correctness only. No baseline run.**
 
-**Cost:** roughly ten minutes of tapping. Without it, "did it improve?" has no
-reliable comparison point.
+A quantitative "before" benchmark was considered and deliberately dropped. The
+current measurement is alignment-dominated, and a rigorous baseline taken
+through it would quantify the artefact to a precision it does not deserve —
+spending hardware time to obtain a number that is not a property of the system.
+The existing reports already establish, sufficiently, that the current
+architecture is untrustworthy.
+
+**The current implementation is therefore treated as the baseline
+architecture**, and the reports of 2026-07-28 stand as historical context rather
+than as a benchmark:
+
+| Metric | Recorded 2026-07-28 |
+|---|---|
+| Calibration acceptance | 44.2% (80 of 181) |
+| `durationAboveMaximum` | 52.5% of attempts |
+| Runtime accuracy | 2% (2 of 100) |
+| False negatives | 90% |
+| False positives | 0% (0 of 60) |
+
+These are context, not a denominator. Phase 1 is judged on whether it produces a
+system that works, not on a delta against an artefact.
 
 ---
 
@@ -151,10 +169,10 @@ and reported. It is never an analytically chosen constant.
 ### Success criteria
 
 Distances and feature values are not comparable across the change, so Phase 1 is
-judged on **space-independent outcome metrics** measured against the Phase 0
-baseline:
+judged on **space-independent outcome metrics**, read as absolute properties of
+the resulting system rather than as deltas against an artefact:
 
-| Metric | Current (untrustworthy pacing) | Phase 1 target |
+| Metric | Historical context | Phase 1 expectation |
 |---|---|---|
 | Calibration acceptance rate | 44.2% | Substantially higher |
 | `durationAboveMaximum` share | 52.5% | Near-eliminated as a dominant cause |
@@ -208,9 +226,11 @@ Recorded so they are not cited later as evidence:
 - **The five-recogniser benchmark** (ADR-016) and the **acceptance-radius
   instrumentation** are computed over a feature space that is substantially
   alignment noise. Neither can be interpreted until Phase 1 completes.
-- **All validation runs before Phase 0** are confounded by the pacing defect.
+- **All validation runs before Phase 0** are confounded by the pacing defect and
+  stand as historical context only.
 - **Every calibration profile** predating Phase 1 is invalid and will be refused
   at load (ADR-017 §7).
 
 No further hardware validation should be run until Phase 0 lands: it would
-produce authoritative-looking numbers that mean nothing.
+produce authoritative-looking numbers that mean nothing. The next hardware
+session should be the Phase 1 calibration.
