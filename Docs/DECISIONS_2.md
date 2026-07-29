@@ -470,3 +470,147 @@ its own inadequacy is visible rather than hidden.
 - The projection tool can mislead if a two-dimensional view is read as the
   space the recogniser sees. Reports state the captured variance so that a
   low-fidelity projection is identifiable as such.
+
+---
+
+# ADR-017 — Event-Anchored Measurement Pipeline
+
+**Status:** Accepted
+**Amends:** ADR-013 (calibration-based classification), ADR-015, ADR-016
+**Invalidates:** every calibration profile produced before this ADR
+
+## Context
+
+Hardware validation produced 2% recognition accuracy against a profile whose
+calibration rejected 52.5% of natural taps for `durationAboveMaximum`.
+Investigation established that the rejection is not detecting long taps: it is
+detecting where the tap happened to fall inside the analysis window.
+
+Three independent findings:
+
+1. **The collected data is self-contradictory under a physical reading.** The
+   measured duration cannot exceed the true duration, so each of the 95
+   rejections requires a tap lasting over 25 ms — yet the 80 accepted samples
+   average 14.26 ms. Both cannot describe one repeatable gesture.
+
+2. **A physically identical tap measures anywhere from 0.17 ms to 39.9 ms**
+   depending only on its position in the frame. Past roughly 30 ms of ring, the
+   measurement saturates: 45 ms, 60 ms, 100 ms and 200 ms taps produce
+   statistically identical readings. Holding the tap fixed and varying only
+   alignment accounts for 97.4% of the measured variance.
+
+3. **Calibration rejects 52.5% where runtime rejects 21.2%** with the same
+   constant, because calibration abandons an attempt on first rejection while
+   runtime processes further frames and gets more alignments per tap.
+
+Extending the analysis to the whole Feature Vector showed the contamination is
+not confined to one feature. Among alignments that would have been accepted, a
+physically constant tap varies by 49% in `signalDuration`, 41% in
+`spectralBandwidth`, 27% in `spectralCentroid`, 22% in `zeroCrossingRate` and
+19–23% in `rmsEnergy`, while `peakAmplitude`, `attackTime` and `decayTime` vary
+by 0% and `dominantFrequency` by 2%.
+
+The split is structural. Every contaminated feature is a **whole-frame
+aggregate**; every robust feature is defined **relative to the event** — its
+peak or its onset. The analysis window is anchored to poll time rather than to
+the event, so any quantity measured against the window inherits the arbitrary
+phase between the two.
+
+Deriving personalised detector parameters from these measurements, as ADR-016
+§3 anticipated, would personalise the artefact.
+
+## Decision
+
+### 1. Measurement shall be anchored to the event, not to the frame
+
+The pipeline is restated as seven stages, each belonging to exactly one of three
+kinds:
+
+| Stage | Kind | Responsibility |
+|---|---|---|
+| 1. Event detection | **Decision** | Did something happen in this frame? |
+| 2. Event localisation | **Measurement** | Where exactly did it begin? |
+| 3. Event extraction | **Measurement** | Obtain a window anchored at the onset. |
+| 4. Feature computation | **Measurement** | Physical quantities of the event. |
+| 5. Parameter derivation | **Modelling** | Calibration only. Gates from observed data. |
+| 6. Profile generation | **Modelling** | Calibration only. Zone models from samples. |
+| 7. Runtime recognition | **Decision** | Which zone, or none. |
+
+### 2. No decision may rest on a frame-relative quantity
+
+Stages 1 and 7 are the only decision stages. Stage 7 operates on event-anchored
+features and is therefore unaffected. Stage 1 must act on a frame, because
+nothing is localised yet — so it shall use **only quantities that are already
+alignment-invariant**, which measurement shows to be peak amplitude. Detection
+answers "did something happen", never "was it a good tap".
+
+Every quality judgement — duration, energy, plausibility — moves after stage 3,
+where it is measured against the event.
+
+### 3. The extraction window shall be derived, not chosen
+
+An analytically chosen window length would repeat the mistake this ADR corrects.
+The window shall be derived from the first observed events of a calibration
+session: extraction begins with a provisional maximum, the decay of those events
+is measured, and the length that contains the measurable ring on this hardware
+is fixed for the remainder of the session and recorded in the profile. The
+derivation shall be reported.
+
+### 4. Measurements that reach the window edge are censored, and shall say so
+
+Any threshold-crossing measurement running to the end of the window is
+right-censored: its true value is unknown and at least the reported one. A
+censored measurement shall carry that status, and **shall never be compared
+against an upper bound** — the comparison that produced the present defect.
+
+Estimators robust to censoring are preferred. A decay *rate*, fitted to the
+visible portion of the envelope, is determined by the slope and remains valid
+when the ring outlasts the window; a threshold crossing is not.
+
+### 5. Calibration retains audio in memory only
+
+Event-anchored measurement requires the audio of each event during the session.
+It is held in an in-memory workspace for the duration of calibration and is
+never written to disk: no temporary files, no cleanup path, no crash recovery.
+An interrupted calibration is restarted.
+
+The persisted profile continues to contain derived parameters, feature vectors,
+statistics and metadata. It shall contain no audio.
+
+Derived acoustic statistics — ring time, decay rate, censoring rate — shall be
+recorded in the calibration report, so the physical properties the snippets made
+measurable outlive the snippets themselves.
+
+### 6. Snippet retention exists only in a separate developer product
+
+Retention for engineering analysis and reproducibility shall be a distinct build
+product. It shall not be a runtime switch, a hidden preference, or a debug menu
+in the shipped application: the production application shall not contain a code
+path capable of persisting calibration audio, so its absence is verifiable by
+inspecting the binary rather than by trusting a flag.
+
+### 7. Profiles under incompatible feature definitions shall fail to load
+
+Feature definitions change here, so every existing profile is invalid. Because
+audio is not retained, no migration is possible and none shall be attempted. A
+profile whose algorithm version does not match shall be **refused with a clear
+explanation requiring recalibration**. Silent migration is forbidden: a stale
+profile interpreted under new definitions is precisely the silent-corruption
+failure this project has designed against throughout.
+
+## Consequences
+
+- Every calibration profile in existence becomes invalid. Recalibration is
+  required once, at this version boundary.
+- Golden and characterization tests over feature values must be regenerated.
+  Their present values encode the defect.
+- Validation runs recorded before this change are **not comparable** with runs
+  after it. Recogniser comparisons, acceptance-radius instrumentation and
+  per-zone accuracy from earlier runs describe a contaminated feature space and
+  shall not be carried forward as evidence.
+- The ring buffer must retain enough history to extract a window anchored at an
+  onset already observed, and must support extraction at an absolute position.
+- Detection becomes cheaper and does less; the work moves to stages that have
+  the information to do it correctly.
+- Features may be added, redefined or removed on physical grounds. Compatibility
+  with the present definitions is explicitly **not** a design constraint.
