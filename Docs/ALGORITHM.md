@@ -750,6 +750,29 @@ The resulting feature vector becomes the sole input to the classification engine
 
 No raw audio samples are compared during runtime classification.
 
+### 14.1.1 Measurement Domain (ADR-017)
+
+Every feature in this section shall be computed over the **event window** of
+§19.5 — a window anchored at the localised onset of the event — and never over
+the poll-aligned analysis frame that triggered detection.
+
+This is not a matter of preference. A quantity measured against the analysis
+frame inherits the arbitrary phase between the frame and the event: measurement
+showed a physically identical tap varying by 49% in duration, 41% in spectral
+bandwidth, 27% in spectral centroid, 22% in zero-crossing rate and 19-23% in
+RMS energy, purely as a function of where it fell in the frame.
+
+The distinction that governs this section:
+
+- Features defined **relative to the event** — its onset or its peak — are
+  alignment-invariant. Peak amplitude, attack time and decay time measured 0%
+  variation under the same test.
+- Features defined as **whole-window aggregates** are alignment-invariant only
+  if the window itself is anchored to the event.
+
+Anchoring the window is therefore a precondition for every feature below, not
+an optimisation.
+
 ---
 
 ## 14.2 Design Objectives
@@ -1166,6 +1189,34 @@ High
 
 Decay Time measures the interval required for the waveform to return to the ambient noise floor after reaching peak amplitude.
 
+### 14.12.1 Known Discrepancy (ADR-017)
+
+The Version 1 implementation does not measure this quantity. It stops at the
+first sample after the peak falling below the offset threshold, which on an
+oscillating waveform is the approach to the next zero crossing rather than the
+end of the decay. Measurement bears this out: the observed mean of 0.294 ms
+corresponds closely to a quarter period at the observed mean dominant frequency
+of 695.8 Hz, which is 0.359 ms. The feature therefore restates
+`Dominant Frequency` rather than describing the decay.
+
+This discrepancy is **recorded and deliberately left in place for Phase 1**,
+which corrects the measurement architecture while holding the feature set fixed.
+Correcting it requires an envelope-based definition, which changes what the
+feature measures and therefore belongs to the representation work of Phase 2.
+
+The feature shall continue to be computed over the event window of §19.5 like
+every other, so its value changes with the anchoring even though its definition
+does not.
+
+Two consequences follow and shall be observed:
+
+- `Decay Time` and `Signal Duration` (§14.13) may prove strongly correlated once
+  both are computed over an anchored window. Correlation between the two shall
+  be reported from calibration telemetry, and evidence presented before any
+  definition is changed.
+- No detector gate shall be derived from `Decay Time` while this discrepancy
+  stands.
+
 ---
 
 ## Units
@@ -1194,7 +1245,11 @@ High
 
 ## Definition
 
-Signal Duration measures the total interval during which signal energy remains above the adaptive noise threshold.
+Signal Duration measures how long the event's acoustic energy persists,
+expressed as the interval over which the decay envelope falls by 20 dB.
+
+It shall be derived from the **decay rate** of the event envelope, not from
+threshold crossings within the observation window.
 
 ---
 
@@ -1204,13 +1259,109 @@ Milliseconds
 
 ---
 
+## Measurement (ADR-017)
+
+### 14.13.1 Envelope
+
+The envelope of the event window shall be estimated by block RMS:
+
+```
+env[k] = sqrt( (1/B) * SUM x[n]^2 )     n = kH .. kH+B-1
+```
+
+with block `B` spanning at least one period of the lowest passband frequency
+and hop `H` giving at least one envelope point per millisecond. For the Version
+1 settings, `B = 96` samples (2 ms) and `H = 48` samples (1 ms) at 48 kHz.
+
+### 14.13.2 Decay Rate
+
+The envelope shall be expressed in decibels and a straight line fitted by
+ordinary least squares:
+
+```
+L(t) = 20 * log10( env(t) )
+L(t) = L0 - (8.685889638 / tau) * t
+```
+
+The coefficient `20 * log10(e) = 8.685889638` is the decibels lost per time
+constant and is exact.
+
+The fit range shall be **fixed**: from 5 dB below the envelope peak down to 25
+dB below it, or to 5 dB above the measured noise floor, whichever is reached
+first. Beginning 5 dB below the peak excludes the attack transient and any
+clipping, neither of which is part of the decay.
+
+The fit range shall not be derived per event. A derived range produces a
+systematic drift as the achievable range shrinks with noise — measured at +14%
+at 25 dB SNR — while reporting no indication that it has done so. A fixed
+target with a recorded shortfall makes the same drift detectable.
+
+### 14.13.3 Reported Quantity
+
+```
+tau = 8.685889638 / |slope|      slope in dB per second
+Signal Duration = tau * ln(10)
+```
+
+For an exponential decay the -20 dB duration and the time constant differ by
+the constant factor `ln(10) = 2.302585`, so this reports the same physical
+quantity the previous threshold-crossing definition intended to measure. Only
+the estimator changes.
+
+### 14.13.4 Reliability
+
+Every estimate shall carry the fitted range in decibels, the coefficient of
+determination of the fit, the number of fitted points, and its censoring status
+(§14.13.5).
+
+An estimate shall be regarded as high-confidence when `r^2 >= 0.99` and the
+fitted range is at least 15 dB. These thresholds are **empirical**, chosen as
+the loosest pair achieving zero false acceptance over a swept population while
+retaining 94% of good estimates. They are subject to revision against hardware
+data.
+
+The reliability criteria detect noise and truncation. They do **not** detect
+model misspecification: where an event contains several modes, the fit reports
+the decay of the dominant surviving mode over the fitted range, and `r^2`
+remains high. The reported quantity is the dominant mode's decay, not an average.
+
+### 14.13.5 Censoring
+
+An estimate is **censored** when the fitted range is narrower than the nominal
+20 dB, that is when the decay meets the noise floor or the end of the event
+window first.
+
+Censored estimates shall participate fully, and at full weight, in statistics
+and modelling. A slope is identified by any portion of the line, so truncation
+costs variance and not bias; measurement confirms the error remains below 1%
+for every window at least as long as the reported duration.
+
+A censored estimate shall **never** be the sole basis for rejecting an event
+against an upper bound. Its implied total duration extrapolates beyond what was
+observed, and comparing that extrapolation against a ceiling asks whether the
+event outlasted a limit the recording stopped before reaching. This was the
+defect that ADR-017 corrects.
+
+### 14.13.6 Declining to Estimate
+
+The estimator shall produce no value, rather than an unreliable one, when fewer
+than three envelope points fall inside the fit range, when the fitted points
+have zero variance in time, or when the fitted slope is not negative.
+
+Declining shall be distinguishable in every report from estimating and then
+rejecting.
+
+The measurable range is bounded below by the envelope resolution: a fit needs
+several points spanning at least 10 dB, and 10 dB of decay takes 1.15 time
+constants. For the Version 1 settings this places the lower bound at
+approximately `tau = 2 ms`.
+
+---
+
 ## Purpose
 
-Tap duration provides additional information regarding the interaction between the user's finger and the laptop chassis.
-
-Very short impulses may represent electrical noise.
-
-Very long events may indicate movement rather than tapping.
+Tap duration provides information regarding the interaction between the user's
+finger and the laptop chassis, and reflects the damping of the struck structure.
 
 ---
 
