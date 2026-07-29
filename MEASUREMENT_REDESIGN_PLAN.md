@@ -234,3 +234,189 @@ Recorded so they are not cited later as evidence:
 No further hardware validation should be run until Phase 0 lands: it would
 produce authoritative-looking numbers that mean nothing. The next hardware
 session should be the Phase 1 calibration.
+
+---
+
+# Phase 1 — Human Testing Checkpoints
+
+Implementation pauses at defined points for hardware validation. The principle:
+**stop as soon as a subsystem makes a user-observable claim testable**, rather
+than after the whole phase.
+
+## Summary
+
+| Subsystem | Build | Unit | Hardware test? | Fresh calibration? | What to evaluate |
+|---|---|---|---|---|---|
+| Audio | ✅ | ✅ | ❌ | ❌ | Nothing user-visible; extraction correctness is offline |
+| DSP | ✅ | ✅ | ❌ | ❌ | Envelope and slope recovery against known τ |
+| Features | ✅ | ✅ | ⚠️ optional | ❌ | **Alignment CV re-measured offline** — the decisive regression |
+| Detection | ✅ | ✅ | ✅ **STOP** | ✅ | **Acceptance rate, rejection breakdown, localisation** |
+| Calibration | ✅ | ✅ | ✅ **STOP** | ✅ | Derived window and gates, decay statistics, censoring rate |
+| Configuration | ✅ | ✅ | ⚠️ brief | ❌ | Old profile refuses to load with a clear message |
+| Runtime | ✅ | ✅ | ❌ | ❌ | Defer — needs the Application layer to be exercisable |
+| Application | ✅ | ✅ | ✅ **STOP** | ✅ | Full validation run; recognition evaluated **here for the first time** |
+
+Three hardware stop points: **after Detection**, **after Calibration**, **after
+Application**.
+
+---
+
+## CP-1 — After Features (offline only)
+
+**A. Ready for calibration?** No. Continue implementing. The pipeline cannot run
+end-to-end until Detection is anchored.
+
+**B. Expected behaviour.** None observable. This is a pure measurement change.
+
+**C. Metrics.** One, and it is the decisive regression for the whole phase:
+re-run the alignment-sensitivity experiment — a physically constant tap swept
+across window offsets — and confirm the coefficient of variation collapses.
+
+| Feature | Before | Required |
+|---|---|---|
+| `signalDuration` → τ | 49% | **< 1%** |
+| `spectralBandwidth` | 41% | < 5% |
+| `spectralCentroid` | 27% | < 5% |
+| `zeroCrossingRate` | 22% | < 5% |
+| `rmsEnergy` | 19–23% | < 5% |
+
+**Ignore for now.** Everything else. There is no recognition to evaluate.
+
+**D. Stop point?** No — but if the CV targets are not met, **stop and report**.
+Failing here means the anchoring is wrong and no later result would be
+interpretable.
+
+**E. Exit criteria.** All five CVs below target; τ recovery within ±2% of ground
+truth for 2 ms ≤ τ ≤ 40 ms; estimator declines on pure noise; clipping immunity
+demonstrated.
+
+---
+
+## CP-2 — After Detection (first hardware stop)
+
+**A. Ready for calibration?** **Yes. Stop implementing.** Build the app, run a
+fresh calibration, collect telemetry, review before continuing.
+
+The extraction window is still a provisional constant at this point — window
+derivation is Calibration's work. That is deliberate: it isolates *"does event
+anchoring fix acceptance?"* from *"does derivation help?"*
+
+**B. Expected behaviour.** Calibration should feel materially different:
+
+- **Acceptance rate substantially above 44.2%.** Natural taps should mostly be
+  accepted rather than mostly rejected.
+- **`durationAboveMaximum` should largely disappear** as a rejection cause. It
+  was 52.5%; a censored duration can no longer be compared against a ceiling.
+- **Shorter session.** 181 attempts for 80 samples should fall towards ~100.
+- **Rejections should feel justified** — genuinely mistimed or too-quiet taps,
+  not taps that felt fine.
+- If it still feels like being trained to tap, something is wrong. Say so.
+
+**C. Metrics.**
+
+- Calibration acceptance rate (was 44.2%)
+- Rejection breakdown by cause (was: `durationAboveMaximum` 52.5%)
+- Event-localisation quality: onset offset distribution, localisation failures
+- Decay statistics: τ distribution, `r²` distribution, `fitRangeDB`
+- Censoring rate — **first real measurement of whether taps outlast the window**
+- Non-detection telemetry: unchanged instrumentation, should still function
+
+**Ignore.** Recognition accuracy, unknown rate, recogniser benchmark. The profile
+is new, the space has changed, and Runtime has not been updated. Any accuracy
+number here is meaningless.
+
+**D. Stop point?** **Yes — the most important one.** If acceptance has not
+materially improved, the diagnosis is wrong and everything downstream is
+premature.
+
+**E. Exit criteria.**
+
+- Acceptance rate **≥ 70%** (from 44.2%)
+- `durationAboveMaximum` **< 10%** of attempts, or absent
+- Event localisation succeeds on **≥ 95%** of detected candidates
+- τ reported with `r² ≥ 0.99` on **≥ 80%** of accepted samples
+- Censoring rate recorded (no threshold — this is the measurement that will
+  *derive* the window in CP-3)
+- Non-detection telemetry still populated
+
+---
+
+## CP-3 — After Calibration (second hardware stop)
+
+**A. Ready for calibration?** **Yes. Stop implementing.** Fresh calibration
+again, this time exercising window derivation and parameter derivation.
+
+**B. Expected behaviour.** Similar to CP-2 but self-tuning: the session should
+begin with a short derivation period, then proceed. Acceptance should be at
+least as good as CP-2 and probably better, because the window now fits this
+hardware. The calibration report should state the derived window and gates.
+
+**C. Metrics.**
+
+- Derived extraction window length, and the events it was derived from
+- Derived detector parameters, with the distribution each came from
+- Acceptance rate versus CP-2 — **must not regress**
+- Censoring rate versus CP-2 — should fall, since the window is now fitted
+- Decay statistics: τ per zone (do zones actually differ? first honest look)
+- Collinearity gate: Pearson r between slots 8 and 9; escalate if |r| > 0.95
+- Report completeness: acoustic statistics persisted although audio was not
+
+**Ignore.** Recognition accuracy — Runtime is still on the old path.
+
+**D. Stop point?** **Yes.** Derived parameters are the first output of the
+"learn the user" architecture. If they are implausible, stop.
+
+**E. Exit criteria.**
+
+- Derived window produced and recorded in the profile
+- Derived gates produced, each traceable to an observed distribution
+- Acceptance rate ≥ CP-2
+- Censoring rate ≤ CP-2
+- In-memory workspace confirmed: **no audio anywhere in the saved profile**,
+  verified by inspecting the JSON
+- Calibration report contains window derivation, decay statistics, censoring
+- Collinearity gate evaluated and reported
+
+---
+
+## CP-4 — After Application (final)
+
+**A. Ready for calibration?** **Yes — full workflow.** Fresh calibration, then a
+full validation run.
+
+**B. Expected behaviour.** Recognition should work. This is the first point at
+which accuracy is meaningful, because it is the first point at which the whole
+chain — anchored measurement, derived parameters, models built from an
+untruncated sample — is in place.
+
+**C. Metrics.** Now everything:
+
+- Recognition accuracy, per zone and overall
+- Unknown rate, false negatives
+- **False positives — constraint, must not regress from 0%**
+- Timeout rate from the Phase 0 harness fix (was 32 of 100 silent)
+- Processing latency, now correctly measured
+- Recogniser benchmark — **re-runnable for the first time on trustworthy
+  features**; the ADR-016 results are void until here
+- Acceptance-radius instrumentation, likewise
+
+**D. Stop point?** Yes — end of Phase 1. Phase 2 does not begin until these are
+reviewed.
+
+**E. Exit criteria.**
+
+- False positives ≤ 0% baseline (**hard constraint**)
+- Recognition accuracy materially above 2%
+- Silent-trial rate < 10% (confirming the Phase 0 fix)
+- Latency p95 within target, measured correctly
+- No subsystem's instrumentation broken
+- All Phase 1 documentation updated and consistent
+
+---
+
+## Discipline per subsystem
+
+Every subsystem commit carries: documentation update, build verification,
+numerical verification where arithmetic is involved, behavioural verification,
+instrumentation verification, and regression analysis where prior measurements
+exist. No batching of behavioural changes.
