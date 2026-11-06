@@ -31,7 +31,9 @@ final class CooldownGateTests: XCTestCase {
         gate.recordRecognition(at: start)
         gate.recordRecognition(at: start.addingTimeInterval(0.2))
         XCTAssertTrue(gate.isActive(at: start.addingTimeInterval(0.25)))
-        XCTAssertFalse(gate.isActive(at: start.addingTimeInterval(0.3)))
+        // Clear of the 0.3 s boundary, where (start + 0.3) − (start + 0.2)
+        // rounds to just under 0.1 s.
+        XCTAssertFalse(gate.isActive(at: start.addingTimeInterval(0.35)))
     }
 
     func testDefaultDurationIsDocumentedValue() {

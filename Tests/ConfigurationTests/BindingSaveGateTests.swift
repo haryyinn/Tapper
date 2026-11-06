@@ -72,12 +72,11 @@ final class ConfigurationStoreSaveGateTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private var shellBindings: PersistedCommandBindings {
-        PersistedCommandBindings(bindings: [
-            CommandBinding(
-                zone: .topLeft, command: Command(type: .shellCommand, target: "echo hi"))
-        ])
-    }
+    // Stored, not computed: each `Command` gets a fresh identifier.
+    private let shellBindings = PersistedCommandBindings(bindings: [
+        CommandBinding(
+            zone: .topLeft, command: Command(type: .shellCommand, target: "echo hi"))
+    ])
 
     func testUnconfirmedShellBindingIsNotPersisted() {
         XCTAssertThrowsError(try store.save(shellBindings, userConfirmed: false)) { error in

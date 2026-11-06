@@ -100,6 +100,18 @@ final class DiagnosticsExporterTests: XCTestCase {
         XCTAssertEqual(leftovers, [], "atomic export must leave no partial data")
     }
 
+    /// The length of the longest array of numbers in a decoded object graph.
+    private func longestNumericArray(in object: Any) -> Int {
+        if let dictionary = object as? [String: Any] {
+            return dictionary.values.map(longestNumericArray(in:)).max() ?? 0
+        }
+        if let array = object as? [Any] {
+            let own = array.allSatisfy { $0 is NSNumber } ? array.count : 0
+            return max(own, array.map(longestNumericArray(in:)).max() ?? 0)
+        }
+        return 0
+    }
+
     /// Recursively collects every JSON key in a decoded object graph.
     private func allKeys(in object: Any) -> Set<String> {
         if let dictionary = object as? [String: Any] {
@@ -128,11 +140,18 @@ final class DiagnosticsExporterTests: XCTestCase {
         let object = try JSONSerialization.jsonObject(
             with: try Data(contentsOf: destination), options: [])
         let keys = Set(allKeys(in: object).map { $0.lowercased() })
-        for forbidden in ["samples", "pcm", "waveform", "audiobuffer", "audiodata", "recording"] {
+        // `samples` is not forbidden: zone profiles carry labelled
+        // feature-vector samples (ADR-015), which are not audio.
+        for forbidden in ["pcm", "waveform", "audiobuffer", "audiodata", "recording"] {
             XCTAssertFalse(
                 keys.contains(forbidden),
                 "diagnostics must exclude audio data; found key '\(forbidden)'")
         }
+        // Audio would appear as a long run of numbers (a 40 ms frame is 1920
+        // samples); a feature vector has ten.
+        XCTAssertLessThanOrEqual(
+            longestNumericArray(in: object), 64,
+            "diagnostics must exclude audio data; found a long numeric array")
 
         // Textual check for audio-specific terms that cannot collide with
         // legitimate configuration field names.

@@ -26,8 +26,9 @@ final class AnalysisFrameExtractorTests: XCTestCase {
         let samples = [Float](repeating: 0, count: 10)
         let base = Date(timeIntervalSince1970: 100)
         let frames = extractor.frames(from: samples, startTimestamp: base, sampleRate: 1000)
-        // Frame 1 begins two samples in; at 1000 Hz that is +0.002 s.
-        XCTAssertEqual(frames[1].timestamp.timeIntervalSince1970, 100.002, accuracy: 1e-9)
+        // Frame 1 begins two samples in; at 1000 Hz that is +0.002 s. `Date`
+        // stores seconds since 2001, so the 1970-based reading is good to ~1e-7.
+        XCTAssertEqual(frames[1].timestamp.timeIntervalSince1970, 100.002, accuracy: 1e-6)
     }
 
     func testBufferShorterThanFrameYieldsNoFrames() {

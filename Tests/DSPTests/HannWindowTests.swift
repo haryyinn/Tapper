@@ -20,7 +20,9 @@ final class HannWindowTests: XCTestCase {
     func testApplyScalesSamples() {
         let window = HannWindow(size: 5)
         let result = window.apply(to: [2, 2, 2, 2, 2])
-        XCTAssertEqual(result.samples, [0, 1, 2, 1, 0])
+        for (value, expected) in zip(result.samples, [0.0, 1, 2, 1, 0]) {
+            XCTAssertEqual(value, expected, accuracy: 1e-12)
+        }
     }
 
     func testApplyProducesHannWindowMetadata() {

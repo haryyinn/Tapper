@@ -20,7 +20,7 @@ final class LinearAlgebraTests: XCTestCase {
         }
     }
 
-    func testCholeskyFactorization() {
+    func testCholeskyFactorization() throws {
         let l = try XCTUnwrap(LinearAlgebra.cholesky([[4, 2], [2, 3]]))
         assertMatrix(l, [[2, 0], [1, 2.0.squareRoot()]], accuracy: accuracy)
     }
@@ -29,12 +29,12 @@ final class LinearAlgebraTests: XCTestCase {
         XCTAssertNil(LinearAlgebra.cholesky([[1, 2], [2, 1]]))
     }
 
-    func testInvertPositiveDefiniteTwoByTwo() {
+    func testInvertPositiveDefiniteTwoByTwo() throws {
         let inverse = try XCTUnwrap(LinearAlgebra.invertPositiveDefinite([[4, 2], [2, 3]]))
         assertMatrix(inverse, [[0.375, -0.25], [-0.25, 0.5]], accuracy: accuracy)
     }
 
-    func testInverseTimesOriginalIsIdentity() {
+    func testInverseTimesOriginalIsIdentity() throws {
         let matrix = [[4.0, 1, 1], [1, 3, 0], [1, 0, 2]]
         let inverse = try XCTUnwrap(LinearAlgebra.invertPositiveDefinite(matrix))
         for i in 0..<3 {
