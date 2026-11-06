@@ -145,7 +145,8 @@ public struct CalibrationSession {
             createdAt: createdAt,
             zones: zoneProfiles,
             normalization: normalization,
-            configuration: configuration
+            configuration: configuration,
+            derivedDetection: DerivedDetectionParameters.derive(fromRawSamples: allSamples)
         )
         state = .completed
         return .success(profile)

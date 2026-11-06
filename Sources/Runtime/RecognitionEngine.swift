@@ -21,7 +21,6 @@ public final class RecognitionEngine: @unchecked Sendable {
     public typealias FrameObserver = @Sendable (FrameOutcome, Date) -> Void
 
     private let buffer: RollingAudioBuffer
-    private let extractor: AnalysisFrameExtractor
     private let queue: DispatchQueue
     private let pollInterval: TimeInterval
 
@@ -41,17 +40,14 @@ public final class RecognitionEngine: @unchecked Sendable {
     /// - Parameters:
     ///   - runtime: The per-frame orchestrator.
     ///   - buffer: The ring buffer written by the audio callback.
-    ///   - extractor: The analysis-frame windowing configuration.
     ///   - pollInterval: How often the worker checks for new samples. Defaults
     ///     to one hop (20 ms at the Version 1 settings).
     public init(
         runtime: RecognitionRuntime,
         buffer: RollingAudioBuffer,
-        extractor: AnalysisFrameExtractor = .v1,
         pollInterval: TimeInterval = 0.020
     ) {
         self.buffer = buffer
-        self.extractor = extractor
         self.pollInterval = pollInterval
         self.queue = DispatchQueue(label: "com.tapper.recognition-worker", qos: .userInitiated)
         self.state = OSAllocatedUnfairLock(
@@ -110,27 +106,20 @@ public final class RecognitionEngine: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + pollInterval) { [weak self] in self?.pump() }
     }
 
-    /// Reads the most recent analysis window and processes it.
+    /// Processes every frame and event the ring buffer can now supply.
     ///
-    /// Polling once per hop yields the documented 50% window overlap
-    /// (`ALGORITHM` §11.3) at the Version 1 settings.
+    /// Frames are stepped by absolute stream position, so scheduling jitter in
+    /// the poll never skips or repeats audio (`ALGORITHM` §11.3, §23.4.1).
     private func processAvailableFrames() {
-        let available = buffer.availableSampleCount
-        guard available >= extractor.frameSize else { return }
-
-        let samples = buffer.latestSamples(extractor.frameSize)
-        guard samples.count == extractor.frameSize else { return }
-        let frame = samples.map(Double.init)
         let timestamp = Date()
-
-        let outcome = state.withLockUnchecked { state -> FrameOutcome? in
-            guard state.isRunning else { return nil }
-            return state.runtime.process(frame: frame, at: timestamp)
+        let outcomes = state.withLockUnchecked { state -> [FrameOutcome] in
+            guard state.isRunning else { return [] }
+            return state.runtime.poll(buffer: buffer, at: timestamp)
         }
-        guard let outcome else { return }
+        guard !outcomes.isEmpty else { return }
 
         let observer = state.withLockUnchecked { $0.observer }
-        observer?(outcome, timestamp)
+        for outcome in outcomes { observer?(outcome, timestamp) }
     }
 
     /// Processes a single supplied frame, bypassing the ring buffer.

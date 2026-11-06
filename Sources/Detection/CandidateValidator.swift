@@ -1,14 +1,13 @@
 import DSP
 import Features
 
-/// Validates a detected candidate before feature processing continues
+/// Validates an extracted event before it is classified
 /// (`ALGORITHM` §22.5 / §23.5).
 ///
-/// Checks execute in the fixed §23.5 order — clipping, minimum duration,
-/// maximum duration, minimum RMS, minimum SNR — and the first failure produces
-/// the corresponding ``RejectionReason`` (§19.18). Absolute measures (RMS, SNR)
-/// use the filtered, pre-normalization signal; the duration measure reuses the
-/// Signal Duration feature on the normalized signal (§19.6).
+/// Checks execute in the fixed §23.5 order and the first failure produces the
+/// corresponding ``RejectionReason`` (§19.18). Absolute measures (RMS, SNR)
+/// use the filtered, pre-normalization event window; the duration measure is
+/// the decay-based Signal Duration of §14.13.
 public struct CandidateValidator: Sendable, Equatable {
 
     /// Minimum signal duration, in milliseconds.
@@ -50,7 +49,13 @@ public struct CandidateValidator: Sendable, Equatable {
         self.clippingThreshold = clippingThreshold
     }
 
-    /// Validates a candidate, returning the first failing check's reason.
+    /// Validates an extracted event, returning the first failing check's
+    /// reason.
+    ///
+    /// Every input is measured over the onset-anchored event window
+    /// (`ALGORITHM` §23.4.1), never over the frame that triggered detection.
+    /// Order: clipping, decay measurability, minimum duration, maximum duration
+    /// (uncensored only, §19.6), minimum RMS, minimum SNR.
     ///
     /// SNR handling is fail-safe: with no noise-floor estimate yet, the
     /// candidate is rejected (`ALGORITHM` — on uncertainty, do nothing). A zero
@@ -58,28 +63,31 @@ public struct CandidateValidator: Sendable, Equatable {
     /// silence has unbounded SNR.
     ///
     /// - Parameters:
-    ///   - dcRemovedSignal: The DC-removed signal, used for the clipping check
+    ///   - dcRemovedWindow: The DC-removed event window, for the clipping check
     ///     (clipping is detected before filtering, `ALGORITHM` §8).
-    ///   - filteredSignal: The band-pass-filtered, pre-normalization signal.
-    ///   - normalizedSignal: The peak-normalized signal, for the duration check.
-    ///   - sampleRate: The sample rate, in hertz.
+    ///   - filteredWindow: The band-pass-filtered, pre-normalization window.
+    ///   - decay: The window's decay estimate, or `nil` if the estimator
+    ///     declined.
     ///   - noiseFloorRMS: The current noise-floor estimate, or `nil` if none.
-    /// - Returns: The rejection reason, or `nil` when the candidate is valid.
+    /// - Returns: The rejection reason, or `nil` when the event is valid.
     public func rejectionReason(
-        dcRemovedSignal: [Double],
-        filteredSignal: [Double],
-        normalizedSignal: [Double],
-        sampleRate: Double,
+        dcRemovedWindow: [Double],
+        filteredWindow: [Double],
+        decay: DecayEstimate?,
         noiseFloorRMS: Double?
     ) -> RejectionReason? {
-        if SignalPreprocessing.isClipped(dcRemovedSignal, threshold: clippingThreshold) {
+        if SignalPreprocessing.isClipped(dcRemovedWindow, threshold: clippingThreshold) {
             return .clipped
         }
-        let duration = TimeDomainFeatures.signalDuration(
-            of: normalizedSignal, sampleRate: sampleRate)
+        guard let decay else { return .decayNotMeasurable }
+        let duration = decay.durationMilliseconds
         if duration < minimumDurationMilliseconds { return .durationBelowMinimum }
-        if duration > maximumDurationMilliseconds { return .durationAboveMaximum }
-        let rms = TimeDomainFeatures.rmsEnergy(of: filteredSignal)
+        // A censored duration is unknown, not excessive (§14.13.5): it may
+        // never alone reject an event against an upper bound.
+        if !decay.isCensored, duration > maximumDurationMilliseconds {
+            return .durationAboveMaximum
+        }
+        let rms = TimeDomainFeatures.rmsEnergy(of: filteredWindow)
         if rms < minimumRMSEnergy { return .rmsBelowMinimum }
         guard let floor = noiseFloorRMS else { return .snrBelowMinimum }
         if floor > 0, rms / floor < minimumSNR { return .snrBelowMinimum }

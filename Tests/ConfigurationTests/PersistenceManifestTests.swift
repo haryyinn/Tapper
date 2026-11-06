@@ -33,7 +33,7 @@ final class PersistenceManifestTests: XCTestCase {
         }
         return CalibrationProfile(
             id: UUID(),
-            algorithmVersion: "1.0",
+            algorithmVersion: CalibrationProfile.currentAlgorithmVersion,
             deviceIdentifier: "test-device",
             createdAt: Date(timeIntervalSince1970: 1_000),
             zones: zones,

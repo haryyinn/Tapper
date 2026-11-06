@@ -1,3 +1,4 @@
+import Audio
 import Foundation
 import XCTest
 
@@ -135,6 +136,49 @@ final class RecognitionRuntimeTests: XCTestCase {
         XCTAssertEqual(classification.status, .success)
         XCTAssertTrue(result.succeeded)
         XCTAssertEqual(provider.executed.count, 1)
+    }
+
+    // MARK: Streaming (ALGORITHM §23.4.1)
+
+    /// Writes `samples` into `buffer` in uneven chunks, polling after each, as
+    /// the audio callback and recognition worker interleave in production.
+    private func stream(
+        _ samples: [Double], into buffer: RollingAudioBuffer, runtime: inout RecognitionRuntime
+    ) -> [FrameOutcome] {
+        var outcomes: [FrameOutcome] = []
+        var index = 0
+        var chunk = 317
+        while index < samples.count {
+            let end = min(samples.count, index + chunk)
+            buffer.write(samples[index..<end].map(Float.init), hostTime: 0)
+            outcomes += runtime.poll(buffer: buffer, at: timestamp)
+            index = end
+            chunk = chunk == 317 ? 1_100 : 317
+        }
+        return outcomes
+    }
+
+    func testStreamedTapExecutesExactlyOnce() throws {
+        let provider = RecordingProvider(commandType: .shellCommand)
+        var runtime = try makeRuntime(
+            profile: makeProfile(threshold: acceptAll), bindings: shellBindings, provider: provider)
+        let buffer = RollingAudioBuffer()
+        let quiet = (0..<9_600).map { 0.001 * sin(2 * Double.pi * 1000 * Double($0) / sampleRate) }
+        let tap = tapFrame() + [Double](repeating: 0, count: 2_880)
+
+        let outcomes = stream(quiet + tap + quiet, into: buffer, runtime: &runtime)
+
+        let executed = outcomes.filter {
+            if case .executed = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(executed.count, 1, "outcomes: \(outcomes.filter { $0 != .noCandidate })")
+        XCTAssertEqual(provider.executed.count, 1)
+        XCTAssertFalse(
+            outcomes.contains {
+                if case .candidateRejected = $0 { return true }
+                return false
+            }, "a clean tap must not be rejected")
     }
 
     func testUnrecognizedTapExecutesNothing() throws {

@@ -1,3 +1,4 @@
+import Audio
 import Calibration
 import Classification
 import Commands
@@ -54,6 +55,7 @@ public enum FrameOutcome: Sendable, Equatable {
 public struct RecognitionRuntime {
 
     private var detector: TapDetector
+    private var pump: EventPump
     private let classifier: ZoneClassifier
     private let calibrationProfile: CalibrationProfile
     private var cooldown: CooldownGate
@@ -93,6 +95,7 @@ public struct RecognitionRuntime {
         recognitionLog: RecognitionLog? = nil
     ) {
         self.detector = detector
+        self.pump = EventPump(frameSize: detector.frameSize, hopSize: detector.frameSize / 2)
         self.classifier = classifier
         self.calibrationProfile = calibrationProfile
         self.cooldown = cooldown
@@ -114,8 +117,32 @@ public struct RecognitionRuntime {
     ///   - timestamp: The frame's capture timestamp.
     /// - Returns: What the runtime sequenced for this frame.
     public mutating func process(frame: [Double], at timestamp: Date) -> FrameOutcome {
+        handle(detector.process(frame: frame, at: timestamp), at: timestamp)
+    }
+
+    /// Processes every frame and event the ring buffer can now supply.
+    ///
+    /// Frames are stepped by absolute stream position at a 50% hop
+    /// (`ALGORITHM` §11.3); a detected event is measured over its
+    /// onset-anchored window once all of it has been captured (§23.4.1).
+    ///
+    /// - Parameters:
+    ///   - buffer: The ring buffer written by the audio callback.
+    ///   - timestamp: The timestamp recorded on this poll's outcomes.
+    /// - Returns: One outcome per examined frame or event, in order.
+    public mutating func poll(buffer: RollingAudioBuffer, at timestamp: Date) -> [FrameOutcome] {
+        pump.poll(buffer: buffer, detector: &detector, at: timestamp).map {
+            handle($0, at: timestamp)
+        }
+    }
+
+    // MARK: Private
+
+    private mutating func handle(_ detection: DetectionOutcome, at timestamp: Date)
+        -> FrameOutcome
+    {
         // Stage 1-2: detection and candidate validation (owned by Detection).
-        switch detector.process(frame: frame, at: timestamp) {
+        switch detection {
         case .noCandidate:
             return .noCandidate
 
@@ -128,8 +155,6 @@ public struct RecognitionRuntime {
             return classifyAndDispatch(candidate.featureVector, at: timestamp)
         }
     }
-
-    // MARK: Private
 
     private mutating func classifyAndDispatch(
         _ featureVector: FeatureVector, at timestamp: Date

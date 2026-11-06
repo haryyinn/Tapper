@@ -133,6 +133,36 @@ public final class RollingAudioBuffer: Sendable {
         }
     }
 
+    /// Returns `count` samples starting at an absolute stream position.
+    ///
+    /// Positions count every sample ever written: the first sample written is
+    /// position `0`. This lets consumers extract a window anchored at an event
+    /// they observed earlier, independent of when they read (ADR-017).
+    ///
+    /// - Parameters:
+    ///   - start: The absolute position of the first sample to return.
+    ///   - count: The number of samples to return.
+    /// - Returns: The samples, oldest first, or `nil` if any requested sample
+    ///   has not been written yet or has already been overwritten.
+    public func samples(from start: Int, count: Int) -> [Float]? {
+        guard start >= 0, count >= 0 else { return nil }
+        return lock.withLock { state -> [Float]? in
+            let end = start + count
+            let oldestRetained = state.totalWritten - min(state.totalWritten, capacity)
+            guard start >= oldestRetained, end <= state.totalWritten else { return nil }
+            var result = [Float](repeating: 0, count: count)
+            // The write index is the ring slot of absolute position totalWritten.
+            var index = (state.writeIndex - (state.totalWritten - start)) % capacity
+            if index < 0 { index += capacity }
+            for offset in 0..<count {
+                result[offset] = state.storage[index]
+                index += 1
+                if index == capacity { index = 0 }
+            }
+            return result
+        }
+    }
+
     /// Clears all retained samples and resets counters.
     public func reset() {
         lock.withLock { state in

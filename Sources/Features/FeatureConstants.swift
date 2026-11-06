@@ -21,12 +21,4 @@ public enum FeatureConstants {
     /// `ALGORITHM` §14.12 refers to an unquantified "ambient noise floor". This
     /// is a **provisional implementation default** to be validated in Phase 9.
     public static let decayOffsetThreshold = 0.10
-
-    /// Amplitude (as a fraction of the normalized peak) above which the signal is
-    /// considered active, for Signal Duration.
-    ///
-    /// `ALGORITHM` §14.13 refers to an unquantified "adaptive noise threshold".
-    /// This is a **provisional implementation default** to be validated in
-    /// Phase 9.
-    public static let durationEnergyThreshold = 0.10
 }

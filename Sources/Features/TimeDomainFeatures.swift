@@ -105,27 +105,6 @@ public enum TimeDomainFeatures {
         return Double(decayEnd - peakIndex) / sampleRate * 1000
     }
 
-    /// Signal Duration: the interval during which the signal stays above the
-    /// activity threshold, in milliseconds (`ALGORITHM` §14.13).
-    ///
-    /// Measured from the first to the last sample whose magnitude reaches
-    /// `energyThreshold`, a provisional fraction of the normalized peak (the
-    /// specification does not define the threshold).
-    ///
-    /// - Parameters:
-    ///   - signal: The normalized signal over the analysis window.
-    ///   - sampleRate: The sample rate, in hertz.
-    ///   - energyThreshold: The activity amplitude threshold.
-    /// - Returns: The duration in milliseconds, or `0` if no active samples exist.
-    public static func signalDuration(
-        of signal: [Double],
-        sampleRate: Double,
-        energyThreshold: Double = FeatureConstants.durationEnergyThreshold
-    ) -> Double {
-        guard !signal.isEmpty, sampleRate > 0 else { return 0 }
-        guard let firstActive = signal.indices.first(where: { abs(signal[$0]) >= energyThreshold }),
-            let lastActive = signal.indices.last(where: { abs(signal[$0]) >= energyThreshold })
-        else { return 0 }
-        return Double(lastActive - firstActive) / sampleRate * 1000
-    }
+    // Signal Duration is the decay-based estimate of `ALGORITHM` §14.13; see
+    // `DSP.DecayEstimator` and `FeatureExtractionPipeline.measure`.
 }

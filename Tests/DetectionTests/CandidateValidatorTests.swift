@@ -1,108 +1,92 @@
+import DSP
 import XCTest
 
 @testable import Detection
 
 final class CandidateValidatorTests: XCTestCase {
 
-    // At 1000 Hz one sample is one millisecond. Signal Duration uses the 0.10
-    // activity threshold on the normalized signal.
-    private let sampleRate = 1000.0
     private let validator = CandidateValidator()
 
-    /// Normalized signal with a 10 ms active span (indices 1…11).
-    private let normalizedTenMilliseconds = [0.0] + [Double](repeating: 1.0, count: 11) + [0.0]
-
-    /// Filtered signal with RMS 0.05.
+    /// Filtered event window with RMS 0.05.
     private let filteredStrong = [Double](repeating: 0.05, count: 13)
 
     private let cleanDCRemoved = [0.1, 0.2, 0.1]
 
+    /// A decay estimate whose −20 dB duration is `duration` milliseconds.
+    private func decay(durationMilliseconds duration: Double, censored: Bool = false)
+        -> DecayEstimate
+    {
+        DecayEstimate(
+            timeConstantMilliseconds: duration / log(10.0), fitRangeDB: 20,
+            coefficientOfDetermination: 0.999, pointCount: 20, isCensored: censored)
+    }
+
+    private func reason(
+        dcRemoved: [Double]? = nil, filtered: [Double]? = nil,
+        decay: DecayEstimate?, noiseFloorRMS: Double?
+    ) -> RejectionReason? {
+        validator.rejectionReason(
+            dcRemovedWindow: dcRemoved ?? cleanDCRemoved,
+            filteredWindow: filtered ?? filteredStrong,
+            decay: decay,
+            noiseFloorRMS: noiseFloorRMS)
+    }
+
     func testValidCandidatePasses() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: filteredStrong,
-            normalizedSignal: normalizedTenMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.01
-        )
-        XCTAssertNil(reason)
+        XCTAssertNil(reason(decay: decay(durationMilliseconds: 10), noiseFloorRMS: 0.01))
     }
 
     func testClippingIsRejectedFirst() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: [0.5, 0.995],
-            filteredSignal: [0.0],  // would also fail RMS
-            normalizedSignal: [0.0],  // would also fail duration
-            sampleRate: sampleRate,
-            noiseFloorRMS: nil
-        )
-        XCTAssertEqual(reason, .clipped)
+        XCTAssertEqual(
+            reason(dcRemoved: [0.5, 0.995], filtered: [0.0], decay: nil, noiseFloorRMS: nil),
+            .clipped)
+    }
+
+    func testDeclinedDecayIsRejectedDistinctly() {
+        XCTAssertEqual(reason(decay: nil, noiseFloorRMS: 0.01), .decayNotMeasurable)
     }
 
     func testTooShortDurationIsRejected() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: filteredStrong,
-            normalizedSignal: [0.0, 1.0, 0.0],  // 0 ms active span
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.01
-        )
-        XCTAssertEqual(reason, .durationBelowMinimum)
+        XCTAssertEqual(
+            reason(decay: decay(durationMilliseconds: 1), noiseFloorRMS: 0.01),
+            .durationBelowMinimum)
     }
 
-    func testTooLongDurationIsRejected() {
-        let thirtyMilliseconds = [0.0] + [Double](repeating: 1.0, count: 31)
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: filteredStrong,
-            normalizedSignal: thirtyMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.01
-        )
-        XCTAssertEqual(reason, .durationAboveMaximum)
+    func testTooLongUncensoredDurationIsRejected() {
+        XCTAssertEqual(
+            reason(decay: decay(durationMilliseconds: 30), noiseFloorRMS: 0.01),
+            .durationAboveMaximum)
+    }
+
+    func testCensoredDurationIsNeverRejectedForLength() {
+        // §14.13.5: a censored duration is unknown, not excessive.
+        XCTAssertNil(
+            reason(decay: decay(durationMilliseconds: 80, censored: true), noiseFloorRMS: 0.01))
     }
 
     func testWeakRMSIsRejected() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: [Double](repeating: 0.001, count: 13),
-            normalizedSignal: normalizedTenMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.0001
-        )
-        XCTAssertEqual(reason, .rmsBelowMinimum)
+        XCTAssertEqual(
+            reason(
+                filtered: [Double](repeating: 0.001, count: 13),
+                decay: decay(durationMilliseconds: 10), noiseFloorRMS: 0.0001),
+            .rmsBelowMinimum)
     }
 
     func testInsufficientSNRIsRejected() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: [Double](repeating: 0.02, count: 13),  // RMS 0.02
-            normalizedSignal: normalizedTenMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.015  // SNR ≈ 1.33 < 2
-        )
-        XCTAssertEqual(reason, .snrBelowMinimum)
+        XCTAssertEqual(
+            reason(
+                filtered: [Double](repeating: 0.02, count: 13),  // RMS 0.02
+                decay: decay(durationMilliseconds: 10),
+                noiseFloorRMS: 0.015),  // SNR ≈ 1.33 < 2
+            .snrBelowMinimum)
     }
 
     func testMissingNoiseFloorRejectsFailSafe() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: filteredStrong,
-            normalizedSignal: normalizedTenMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: nil
-        )
-        XCTAssertEqual(reason, .snrBelowMinimum)
+        XCTAssertEqual(
+            reason(decay: decay(durationMilliseconds: 10), noiseFloorRMS: nil), .snrBelowMinimum)
     }
 
     func testZeroNoiseFloorPassesSNR() {
-        let reason = validator.rejectionReason(
-            dcRemovedSignal: cleanDCRemoved,
-            filteredSignal: filteredStrong,
-            normalizedSignal: normalizedTenMilliseconds,
-            sampleRate: sampleRate,
-            noiseFloorRMS: 0.0
-        )
-        XCTAssertNil(reason)
+        XCTAssertNil(reason(decay: decay(durationMilliseconds: 10), noiseFloorRMS: 0.0))
     }
 }

@@ -63,12 +63,17 @@ public struct FeatureExtractionPipeline {
         )
     }
 
-    /// Extracts a feature vector from one frame.
+    /// Extracts a feature vector from one self-contained frame.
+    ///
+    /// The frame is treated as the whole observation: it is preprocessed from
+    /// zero filter state and measured with ``measure(eventWindow:noiseFloorRMS:)``.
+    /// Runtime recognition measures onset-anchored event windows instead
+    /// (`ALGORITHM` §23.4.1); this entry point serves offline tooling and tests.
     ///
     /// - Parameter samples: The frame's samples, in `Double`. Its count must
     ///   equal ``frameSize``.
     /// - Returns: The extracted ``FeatureVector``, or `nil` if the frame is
-    ///   clipped and therefore rejected.
+    ///   clipped or its decay cannot be estimated.
     public func extract(from samples: [Double]) -> FeatureVector? {
         precondition(samples.count == frameSize, "frame length must equal frameSize")
 
@@ -76,19 +81,44 @@ public struct FeatureExtractionPipeline {
         guard !SignalPreprocessing.isClipped(dcRemoved, threshold: clippingThreshold) else {
             return nil
         }
-        let filtered = filter.process(dcRemoved)
-        let (normalized, peak) = SignalPreprocessing.peakNormalized(filtered)
+        return measure(eventWindow: filter.process(dcRemoved), noiseFloorRMS: nil).featureVector
+    }
+
+    /// Measures the ten features of one event window (`ALGORITHM` §14.1.1).
+    ///
+    /// Time-domain features are computed on the peak-normalized window (before
+    /// windowing); spectral features on its Hann-windowed spectrum. Signal
+    /// Duration is the decay-based estimate of §14.13, computed on the
+    /// pre-normalization window so the noise floor shares its scale.
+    ///
+    /// - Parameters:
+    ///   - eventWindow: The band-pass-filtered, pre-normalization event window.
+    ///     At most ``frameSize`` samples; a shorter window is measured as it
+    ///     is.
+    ///   - noiseFloorRMS: The ambient noise floor on the same scale, if known.
+    /// - Returns: The decay estimate and, when the estimator did not decline,
+    ///   the feature vector.
+    public func measure(eventWindow: [Double], noiseFloorRMS: Double?) -> EventMeasurement {
+        precondition(eventWindow.count <= frameSize, "event window exceeds frameSize")
+
+        let decay = DecayEstimator().estimate(
+            eventWindow, sampleRate: sampleRate, noiseFloorRMS: noiseFloorRMS)
+        guard let decay else { return EventMeasurement(decay: nil, featureVector: nil) }
+
+        let (normalized, peak) = SignalPreprocessing.peakNormalized(eventWindow)
 
         // Time-domain features (on the normalized, pre-window signal).
         let rmsEnergy = TimeDomainFeatures.rmsEnergy(of: normalized)
         let zeroCrossingRate = TimeDomainFeatures.zeroCrossingRate(of: normalized)
         let attackTime = TimeDomainFeatures.attackTime(of: normalized, sampleRate: sampleRate)
         let decayTime = TimeDomainFeatures.decayTime(of: normalized, sampleRate: sampleRate)
-        let signalDuration = TimeDomainFeatures.signalDuration(
-            of: normalized, sampleRate: sampleRate)
 
-        // Spectral features (on the Hann-windowed FFT magnitude spectrum).
-        let window = hannWindow.apply(to: normalized)
+        // Spectral features (on the Hann-windowed FFT magnitude spectrum). A
+        // shorter window is tapered over the samples present; the FFT pads.
+        let window =
+            normalized.count == frameSize
+            ? hannWindow.apply(to: normalized)
+            : HannWindow(size: normalized.count).apply(to: normalized)
         let spectrum = Spectrum(fftResult: fourierTransform.magnitudeSpectrum(of: window.samples))
         let spectralCentroid = SpectralFeatures.spectralCentroid(spectrum)
         let spectralBandwidth = SpectralFeatures.spectralBandwidth(
@@ -96,7 +126,7 @@ public struct FeatureExtractionPipeline {
         let spectralRollOff = SpectralFeatures.spectralRollOff(spectrum)
         let dominantFrequency = SpectralFeatures.dominantFrequency(spectrum)
 
-        return FeatureVector(
+        let vector = FeatureVector(
             peakAmplitude: peak,
             rmsEnergy: rmsEnergy,
             spectralCentroid: spectralCentroid,
@@ -106,7 +136,24 @@ public struct FeatureExtractionPipeline {
             zeroCrossingRate: zeroCrossingRate,
             attackTime: attackTime,
             decayTime: decayTime,
-            signalDuration: signalDuration
+            signalDuration: decay.durationMilliseconds
         )
+        return EventMeasurement(decay: decay, featureVector: vector)
+    }
+}
+
+/// The measurement of one event window.
+public struct EventMeasurement: Sendable, Equatable {
+
+    /// The decay estimate, or `nil` if the estimator declined (§14.13.6).
+    public let decay: DecayEstimate?
+
+    /// The feature vector, present exactly when `decay` is.
+    public let featureVector: FeatureVector?
+
+    /// Creates a measurement.
+    public init(decay: DecayEstimate?, featureVector: FeatureVector?) {
+        self.decay = decay
+        self.featureVector = featureVector
     }
 }

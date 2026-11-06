@@ -5,9 +5,10 @@ intentional taps on the MacBook chassis using the built-in microphone and
 executes user-configured commands. Recognition is fully local, offline, and
 deterministic — no AI, no ML, no networking, no telemetry.
 
-> Status: **Phase 0 (Bootstrap).** This establishes a clean, buildable Swift
-> Package. The recognition pipeline is implemented subsystem by subsystem in
-> later phases. See `Docs/IMPLEMENTATION_PLAN.md`.
+> Status: **Measurement redesign, Phase 1 — at checkpoint CP-3.** Every
+> subsystem is implemented. Event-anchored measurement (ADR-017) is in place,
+> with a 70 ms event window and a calibration-derived duration limit. The next
+> step is a fresh hardware calibration. See `MEASUREMENT_REDESIGN_PLAN.md`.
 
 ## Requirements
 
@@ -16,6 +17,8 @@ deterministic — no AI, no ML, no networking, no telemetry.
 - Full Xcode is required to run the XCTest suite locally (`swift test`). With
   Command Line Tools only, `swift build` works but XCTest is unavailable; the
   test suite runs in CI on a macOS runner with Xcode.
+- A saved calibration from before algorithm version 2.1 is refused at launch;
+  recalibrate once after upgrading.
 
 ## Build, test, and lint
 

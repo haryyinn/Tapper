@@ -85,7 +85,8 @@ public enum ProfileRefinement {
                 createdAt: createdAt,
                 zones: regenerated,
                 normalization: profile.normalization,
-                configuration: profile.configuration))
+                configuration: profile.configuration,
+                derivedDetection: profile.derivedDetection))
     }
 
     /// Normalizes a feature vector with a profile's stored transform, so a

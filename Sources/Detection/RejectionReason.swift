@@ -11,8 +11,14 @@ public enum RejectionReason: Sendable, Equatable {
     /// The signal duration was below the configured minimum (§23.5).
     case durationBelowMinimum
 
-    /// The signal duration exceeded the configured maximum (§19.6, §23.5).
+    /// The uncensored signal duration exceeded the configured maximum
+    /// (§19.6, §23.5). A censored duration never produces this reason.
     case durationAboveMaximum
+
+    /// The decay estimator declined to measure the event (§14.13.6), for
+    /// example because it does not decay. Distinct from a duration outside
+    /// the limits.
+    case decayNotMeasurable
 
     /// The RMS energy was below the configured minimum (§19.5, §23.5).
     case rmsBelowMinimum

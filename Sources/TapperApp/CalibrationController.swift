@@ -41,6 +41,7 @@ final class CalibrationController: ObservableObject {
 
     /// Statistics over frames that never reached the detection gate.
     @Published private(set) var nonDetection: NonDetectionStatistics?
+    @Published private(set) var eventStatistics: EventStatistics?
     @Published private(set) var message = "Not started."
     @Published private(set) var isRunning = false
 
@@ -92,7 +93,10 @@ final class CalibrationController: ObservableObject {
                     configuration: configuration,
                     deviceIdentifier: Self.deviceIdentifier(),
                     algorithmVersion: Self.algorithmVersion),
-                detector: try TapDetector.v1(),
+                // No upper duration limit while collecting: calibration
+                // derives that limit from these taps (`ALGORITHM` §19.6).
+                detector: try TapDetector.v1(
+                    validator: CandidateValidator(maximumDurationMilliseconds: .infinity)),
                 buffer: composition.audioBuffer,
                 samplesPerZone: configuration.samplesPerZone,
                 logger: DiagnosticsLogger(
@@ -168,9 +172,19 @@ final class CalibrationController: ObservableObject {
                         zone: zone, accepted: collected, note: "Not usable (\(reason)) — retry.",
                         cause: String(describing: reason))
                 case .timedOut:
-                    AppLog.calibration("No tap detected within timeout")
+                    let heard = box.value.lastListeningWindow
+                    let gate = DetectionConstants.detectionPeakThreshold
+                    let loudest = heard?.loudestFilteredPeak ?? 0
+                    AppLog.calibration(
+                        "No tap detected within timeout — frames \(heard?.framesExamined ?? 0), "
+                            + "loudest filtered peak \(loudest), pre-filter "
+                            + "\(heard?.loudestPrefilterPeak ?? 0), gate \(gate), noise floor "
+                            + "\(box.value.noiseFloorRMS.map { "\($0)" } ?? "none")")
                     record(
-                        zone: zone, accepted: collected, note: "No tap detected — retry.",
+                        zone: zone, accepted: collected,
+                        note: String(
+                            format: "No tap detected — loudest sound reached %.0f%% of the "
+                                + "detection level. Retry.", loudest / gate * 100),
                         cause: "notDetected(belowDetectionThreshold)")
                 case .notCollecting:
                     AppLog.calibration("STOPPED: session not collecting")
@@ -191,7 +205,8 @@ final class CalibrationController: ObservableObject {
                 do {
                     try self.composition.configuration.save(profile)
                     AppLog.calibration("Profile saved (\(profile.zones.count) zones)")
-                    self.writeReport(profileZones: profile.zones.count)
+                    self.writeReport(
+                        profileZones: profile.zones.count, derived: profile.derivedDetection)
                     self.phase = .finished(zones: profile.zones.count)
                     self.message =
                         "Calibration complete. Profile saved for \(profile.zones.count) zones."
@@ -240,10 +255,16 @@ final class CalibrationController: ObservableObject {
     /// Captures non-detection telemetry from the coordinator for reporting.
     private nonisolated func captureTelemetry(from box: UncheckedBox<CalibrationCoordinator>) {
         let stats = box.value.nonDetectionStatistics
-        Task { @MainActor in self.nonDetection = stats }
+        let eventStats = box.value.eventStatistics
+        Task { @MainActor in
+            self.nonDetection = stats
+            self.eventStatistics = eventStats
+        }
     }
 
-    private func writeReport(profileZones: Int, failure: String? = nil) {
+    private func writeReport(
+        profileZones: Int, derived: DerivedDetectionParameters? = nil, failure: String? = nil
+    ) {
         var counts = rejectionCounts
         let acceptedTotal = accepted.values.reduce(0, +)
         counts["Accepted"] = acceptedTotal
@@ -292,6 +313,44 @@ final class CalibrationController: ObservableObject {
             text += "  no non-detected frames were measured\n"
         }
         text += "\n"
+        text += "Event measurement — onset-anchored windows (ADR-017)\n"
+        text += String(repeating: "-", count: 72) + "\n"
+        text += String(
+            format: "  event window:            %.0f ms\n",
+            Double(DetectionConstants.eventWindowSamples) / 48.0)
+        if let derived {
+            text += String(
+                format: "  derived duration limit:  %.1f ms   (from %d samples; floor %.0f ms)\n",
+                derived.maximumSignalDurationMilliseconds, derived.sampleCount,
+                DerivedDetectionParameters.durationFloorMilliseconds)
+        }
+        if let events = eventStatistics {
+            text += "  events measured:         \(events.count)\n"
+            text += String(
+                format: "  decay τ:                 median %.2f ms   (p10 %.2f, p90 %.2f)\n",
+                events.medianTimeConstantMilliseconds, events.timeConstantP10Milliseconds,
+                events.timeConstantP90Milliseconds)
+            text += String(
+                format: "  fit quality:             median r² %.4f   median range %.1f dB\n",
+                events.medianCoefficientOfDetermination, events.medianFitRangeDB)
+            text += String(
+                format: "  high-confidence:         %.1f%%   (r² ≥ 0.99 and ≥ 15 dB)\n",
+                events.highConfidenceFraction * 100)
+            text += String(
+                format: "  censored:                %.1f%%   (ring outlasted the window)\n",
+                events.censoredFraction * 100)
+            text += String(
+                format: "  onset vs detecting peak: median %.0f samples\n",
+                events.medianOnsetOffsetSamples)
+            if let r = events.decayDurationCorrelation {
+                text += String(
+                    format: "  slots 8–9 correlation:   r = %.3f%@\n", r,
+                    abs(r) > 0.95 ? "   ESCALATE: |r| > 0.95" : "")
+            }
+        } else {
+            text += "  no events were measured\n"
+        }
+        text += "\n"
         text += "The dominant non-accepted cause identifies which criterion rejects\n"
         text += "natural taps. No threshold was changed by this run.\n"
 
@@ -318,7 +377,7 @@ final class CalibrationController: ObservableObject {
 
     // MARK: Helpers
 
-    private static let algorithmVersion = "1.0"
+    private static let algorithmVersion = CalibrationProfile.currentAlgorithmVersion
 
     private static func deviceIdentifier() -> String {
         Host.current().localizedName ?? ProcessInfo.processInfo.hostName

@@ -86,6 +86,10 @@ final class CalibrationSessionTests: XCTestCase {
         XCTAssertEqual(profile.normalization.means.count, 10)
         XCTAssertNotNil(profile.profile(for: .bottomRight))
         XCTAssertNil(profile.profile(for: .unknown))
+        // Every sample has a 10 ms duration, so the limit falls to the floor.
+        XCTAssertEqual(
+            profile.derivedDetection,
+            DerivedDetectionParameters(maximumSignalDurationMilliseconds: 25, sampleCount: 8))
     }
 
     func testGenerateBeforeReadyFails() {

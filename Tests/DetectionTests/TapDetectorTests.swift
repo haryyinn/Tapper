@@ -69,12 +69,13 @@ final class TapDetectorTests: XCTestCase {
         XCTAssertEqual(detector.process(frame: frame, at: timestamp), .rejected(.clipped))
     }
 
-    func testSustainedToneIsRejectedForDuration() throws {
+    func testSustainedToneIsRejectedAsNotDecaying() throws {
+        // A tone that never decays has no decay rate to estimate (§14.13.6).
         var detector = try TapDetector.v1()
         _ = detector.process(frame: noiseFrame(), at: timestamp)
         XCTAssertEqual(
             detector.process(frame: sustainedFrame(), at: timestamp),
-            .rejected(.durationAboveMaximum)
+            .rejected(.decayNotMeasurable)
         )
     }
 
@@ -90,10 +91,20 @@ final class TapDetectorTests: XCTestCase {
         var first = try TapDetector.v1()
         var second = try TapDetector.v1()
         for frame in [noiseFrame(), tapFrame(), sustainedFrame()] {
+            // Candidate identifiers are fresh UUIDs; compare everything else.
             XCTAssertEqual(
-                first.process(frame: frame, at: timestamp),
-                second.process(frame: frame, at: timestamp)
+                comparable(first.process(frame: frame, at: timestamp)),
+                comparable(second.process(frame: frame, at: timestamp))
             )
         }
+    }
+
+    private func comparable(_ outcome: DetectionOutcome) -> DetectionOutcome {
+        guard case .candidate(let candidate) = outcome else { return outcome }
+        return .candidate(
+            Candidate(
+                id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+                featureVector: candidate.featureVector, detectedAt: candidate.detectedAt,
+                status: candidate.status, event: candidate.event))
     }
 }

@@ -194,6 +194,11 @@ public struct ConfigurationStore {
             throw ConfigurationError.integrityCheckFailed
         }
         try ConfigurationValidator.validate(stored.profile)
+        // Refuse, never reinterpret, a profile from other feature definitions.
+        guard stored.profile.algorithmVersion == CalibrationProfile.currentAlgorithmVersion else {
+            throw ConfigurationError.recalibrationRequired(
+                profileAlgorithmVersion: stored.profile.algorithmVersion)
+        }
         return stored.profile
     }
 

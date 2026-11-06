@@ -41,13 +41,14 @@ public enum CalibrationCaptureResult: Sendable, Equatable {
 public final class CalibrationCoordinator {
 
     private let buffer: RollingAudioBuffer
-    private let extractor: AnalysisFrameExtractor
+    private var pump: EventPump
     private let pollInterval: TimeInterval
     private let logger: DiagnosticsLogger?
 
     private var session: CalibrationSession
     private var detector: TapDetector
     private var nonDetectionSamples: [NonDetectionSample] = []
+    private var events: [(EventTelemetry, FeatureVector)] = []
 
     /// The current calibration state, as reported by the calibration engine.
     public var state: CalibrationState { session.state }
@@ -55,6 +56,10 @@ public final class CalibrationCoordinator {
     /// The number of samples required per zone, from the calibration
     /// configuration.
     public let samplesPerZone: Int
+
+    /// The detector's current ambient noise-floor RMS, or `nil` before any
+    /// quiet frame. Diagnostic only.
+    public var noiseFloorRMS: Double? { detector.currentNoiseFloorRMS }
 
     /// Aggregate statistics over frames that never became candidates, or `nil`
     /// if none were observed. Diagnostic only.
@@ -70,7 +75,6 @@ public final class CalibrationCoordinator {
     ///   - buffer: The ring buffer written by the audio callback.
     ///   - samplesPerZone: Samples required per zone, matching the session's
     ///     configuration.
-    ///   - extractor: The analysis-frame configuration.
     ///   - pollInterval: How often to check the ring buffer for a new frame.
     ///   - logger: Optional diagnostics logger.
     public init(
@@ -78,7 +82,6 @@ public final class CalibrationCoordinator {
         detector: TapDetector,
         buffer: RollingAudioBuffer,
         samplesPerZone: Int,
-        extractor: AnalysisFrameExtractor = .v1,
         pollInterval: TimeInterval = 0.020,
         logger: DiagnosticsLogger? = nil
     ) {
@@ -86,7 +89,7 @@ public final class CalibrationCoordinator {
         self.detector = detector
         self.buffer = buffer
         self.samplesPerZone = samplesPerZone
-        self.extractor = extractor
+        self.pump = EventPump(frameSize: detector.frameSize, hopSize: detector.frameSize / 2)
         self.pollInterval = pollInterval
         self.logger = logger
         // Instrumentation only: records why frames failed detection without
@@ -99,41 +102,66 @@ public final class CalibrationCoordinator {
     /// Starts collection at the first canonical zone.
     public func begin() {
         nonDetectionSamples.removeAll()
+        events.removeAll()
         session.begin()
         logger?.record(.info, category: .calibration, "calibration started", at: Date())
     }
 
     /// Waits for one tap and offers it to the calibration session.
     ///
-    /// Frames are read from the ring buffer and passed to the detector until a
-    /// candidate is produced or `timeout` elapses. Detected-but-rejected taps
-    /// and timeouts are reported so the operator can retry; neither advances
-    /// the session.
+    /// Audio captured before the call is ignored: the operator is prompted
+    /// first, then the stream is examined from the present. A detected event is
+    /// measured over its onset-anchored window (`ALGORITHM` §23.4.1).
+    /// Detected-but-rejected taps and timeouts are reported so the operator can
+    /// retry; neither advances the session.
     ///
     /// - Parameter timeout: How long to wait for a tap, in seconds.
     /// - Returns: The capture result.
     public func captureSample(timeout: TimeInterval) -> CalibrationCaptureResult {
         guard case .collecting = session.state else { return .notCollecting }
 
+        pump.resume(at: buffer.totalSamplesWritten)
+        let windowStart = nonDetectionSamples.count
+        defer { lastListeningWindow = Self.summarise(nonDetectionSamples[windowStart...]) }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            guard let frame = nextFrame() else {
-                Thread.sleep(forTimeInterval: pollInterval)
-                continue
+            for outcome in pump.poll(buffer: buffer, detector: &detector, at: Date()) {
+                switch outcome {
+                case .noCandidate:
+                    continue
+                case .rejected(let reason):
+                    logger?.record(
+                        .info, category: .calibration, "sample rejected: \(reason)", at: Date())
+                    return .rejected(reason)
+                case .candidate(let candidate):
+                    if let event = candidate.event {
+                        events.append((event, candidate.featureVector))
+                    }
+                    return offer(candidate.featureVector)
+                }
             }
-            switch detector.process(frame: frame, at: Date()) {
-            case .noCandidate:
-                continue
-            case .rejected(let reason):
-                logger?.record(
-                    .info, category: .calibration, "sample rejected: \(reason)", at: Date())
-                return .rejected(reason)
-            case .candidate(let candidate):
-                return offer(candidate.featureVector)
-            }
+            Thread.sleep(forTimeInterval: pollInterval)
         }
         return .timedOut
     }
+
+    /// What the detector heard during the most recent ``captureSample(timeout:)``
+    /// call, from frames that stayed below the detection gate. Diagnostic only:
+    /// it explains a timeout without changing any decision.
+    public private(set) var lastListeningWindow: ListeningWindowSummary?
+
+    private static func summarise(_ samples: ArraySlice<NonDetectionSample>)
+        -> ListeningWindowSummary
+    {
+        ListeningWindowSummary(
+            framesExamined: samples.count,
+            loudestFilteredPeak: samples.map(\.filteredPeak).max() ?? 0,
+            loudestPrefilterPeak: samples.map(\.prefilterPeak).max() ?? 0)
+    }
+
+    /// Localisation and decay statistics over the events captured this
+    /// session, or `nil` if none. Diagnostic only; nothing is derived from it.
+    public var eventStatistics: EventStatistics? { EventStatistics.make(from: events) }
 
     /// Offers a feature vector directly, bypassing capture.
     ///
@@ -181,12 +209,18 @@ public final class CalibrationCoordinator {
         }
         return result
     }
+}
 
-    /// Reads one complete analysis frame from the ring buffer, if available.
-    private func nextFrame() -> [Double]? {
-        guard buffer.availableSampleCount >= extractor.frameSize else { return nil }
-        let samples = buffer.latestSamples(extractor.frameSize)
-        guard samples.count == extractor.frameSize else { return nil }
-        return samples.map(Double.init)
-    }
+/// What the detector heard below its gate during one listening window.
+public struct ListeningWindowSummary: Sendable, Equatable {
+
+    /// Frames examined that did not reach the detection gate.
+    public let framesExamined: Int
+
+    /// The loudest band-pass-filtered peak among them; the detection gate
+    /// compares this quantity against its threshold.
+    public let loudestFilteredPeak: Double
+
+    /// The loudest peak before filtering.
+    public let loudestPrefilterPeak: Double
 }

@@ -20,6 +20,9 @@ enum CompositionFailure: Error, CustomStringConvertible {
             return "Microphone access is unavailable."
         case .startupBlocked(.calibrationRequired):
             return "Calibration is required before recognition can start."
+        case .startupBlocked(.calibrationInvalid(.recalibrationRequired)):
+            return "Tapper's tap measurement has been rebuilt, so the saved calibration "
+                + "no longer applies. Please calibrate again."
         case .startupBlocked(.calibrationInvalid(let error)):
             return "The stored calibration profile could not be loaded (\(error))."
         case .startupBlocked(.recognitionDisabled):
@@ -97,7 +100,14 @@ struct AppComposition {
         let bindings = configuration.loadCommandBindings().value
         let detector: TapDetector
         do {
-            detector = try TapDetector.v1()
+            // The profile's derived duration limit replaces the default
+            // (`ALGORITHM` §19.6).
+            let validator =
+                profile.derivedDetection.map {
+                    CandidateValidator(
+                        maximumDurationMilliseconds: $0.maximumSignalDurationMilliseconds)
+                } ?? CandidateValidator()
+            detector = try TapDetector.v1(validator: validator)
         } catch {
             throw CompositionFailure.engineUnavailable(String(describing: error))
         }

@@ -1,6 +1,48 @@
 # Measurement Redesign — Implementation Plan
 
-Implements ADR-017. Split into phases so that **one variable changes at a time**.
+Implements ADR-017.
+
+## Progress (2026-10-25)
+
+| Step | State |
+|---|---|
+| Phase 0 — harness correctness | Done (`5d9ac35`) |
+| Docs — `ALGORITHM` §14, §19.6, §23.4.1–23.5; `DATA_MODELS` §7.7 | Done |
+| Audio — absolute-position reads | Done |
+| DSP — `DecayEstimator` | Done |
+| Features — measurement over the event window | Done |
+| **CP-1** (offline alignment regression) | **Passed**, see below |
+| Detection — detect → localise → extract → validate | Done |
+| Configuration — refusal of pre-2.0 profiles | Done |
+| Runtime / App — stream stepping, event telemetry in report | Done (wiring needed to reach CP-2) |
+| **CP-2** (first hardware stop, 2026-10-26) | Done. Acceptance 75.5% (≥ 70% ✅). Fixed 25 ms limit rejected 16% (< 10% ❌); 92.5% censored; 0% high-confidence (❌) |
+| Calibration — 70 ms window, derived duration limit (CP-3) | Done in code; profile version 2.1 |
+| **CP-3** (second hardware stop) | **Next: fresh calibration on hardware** |
+
+CP-1 result. A constant synthetic tap swept across 52 frame offsets gave these
+coefficients of variation: `signalDuration` 0.09% (target < 1%),
+`spectralBandwidth` 0.96%, `spectralCentroid` 0.31%, `zeroCrossingRate` 3.32%,
+`rmsEnergy` 0.05% (targets < 5%). Recovery of τ was within ±2% for
+2 ms ≤ τ ≤ 40 ms. The estimator declines on silence and on sustained tones.
+Clipping the top 3 dB of the attack leaves τ within 3%. In a streamed
+simulation (random offsets, uneven write chunks, τ from 3 to 25 ms) 500 of 500
+taps were accepted and none counted twice.
+
+Deviations recorded:
+
+- Runtime was wired before CP-2, because a hardware calibration cannot run end
+  to end without it.
+- The event window is a constant (70 ms) set once from the CP-2 measurements,
+  not derived per session as ADR-017 §3 asks. A per-session window would change
+  the measurement domain between calibration and runtime and make profiles
+  incomparable (`ALGORITHM` §23.4.1).
+
+CP-2 → CP-3 rationale. CP-2 measured a median decay τ of 16.3 ms (p10 9.4,
+p90 32.5), so a median tap fades by 20 dB in about 37 ms. That outlasts the
+40 ms window and exceeds the fixed 25 ms limit. In a simulation of taps drawn
+from that distribution, the 70 ms window cut censoring from 92.5% to 22% and
+raised high-confidence fits from 0% to 92%. The derived limit (113 ms) accepted
+200 of 200 taps, where the fixed 25 ms limit accepted 85 of 200. Split into phases so that **one variable changes at a time**.
 
 | Phase | Question it answers | Feature dimension |
 |---|---|---|

@@ -21,6 +21,12 @@ public struct CalibrationProfile: Sendable, Equatable, Codable {
     /// The algorithm version this profile was generated for.
     public let algorithmVersion: String
 
+    /// The running algorithm version (`DATA_MODELS` §7.7). 2.0 introduced
+    /// event-anchored measurement (ADR-017); 2.1 the 70 ms event window and
+    /// derived detection parameters. Profiles of any other version are refused
+    /// at load and require recalibration.
+    public static let currentAlgorithmVersion = "2.1"
+
     /// A device fingerprint (`DATA_MODELS` §7.6).
     public let deviceIdentifier: String
 
@@ -38,6 +44,10 @@ public struct CalibrationProfile: Sendable, Equatable, Codable {
     /// thresholds, ambiguity margin).
     public let configuration: CalibrationConfiguration
 
+    /// Detection parameters derived from this calibration's samples, or `nil`
+    /// for a profile that predates them (the defaults then apply).
+    public let derivedDetection: DerivedDetectionParameters?
+
     /// Creates a calibration profile.
     public init(
         id: UUID,
@@ -46,7 +56,8 @@ public struct CalibrationProfile: Sendable, Equatable, Codable {
         createdAt: Date,
         zones: [ZoneProfile],
         normalization: NormalizationParameters,
-        configuration: CalibrationConfiguration
+        configuration: CalibrationConfiguration,
+        derivedDetection: DerivedDetectionParameters? = nil
     ) {
         self.id = id
         self.algorithmVersion = algorithmVersion
@@ -55,6 +66,7 @@ public struct CalibrationProfile: Sendable, Equatable, Codable {
         self.zones = zones
         self.normalization = normalization
         self.configuration = configuration
+        self.derivedDetection = derivedDetection
     }
 
     /// The profile for a given zone, if calibrated.

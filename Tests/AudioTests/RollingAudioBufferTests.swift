@@ -89,4 +89,36 @@ final class RollingAudioBufferTests: XCTestCase {
         XCTAssertEqual(buffer.availableSampleCount, 0)
         XCTAssertEqual(buffer.lastWriteHostTime, 0)
     }
+
+    // MARK: Absolute-position reads (ADR-017)
+
+    func testAbsoluteReadBeforeWrapReturnsRequestedRange() {
+        let buffer = RollingAudioBuffer(capacity: 8)
+        buffer.write([10, 11, 12, 13, 14], hostTime: 1)
+        XCTAssertEqual(buffer.samples(from: 1, count: 3), [11, 12, 13])
+        XCTAssertEqual(buffer.samples(from: 0, count: 5), [10, 11, 12, 13, 14])
+        XCTAssertEqual(buffer.samples(from: 5, count: 0), [])
+    }
+
+    func testAbsoluteReadAfterWrapUsesStreamPositions() {
+        let buffer = RollingAudioBuffer(capacity: 4)
+        buffer.write([0, 1, 2, 3, 4, 5, 6], hostTime: 1)
+        // Positions 3...6 are retained; 0...2 have been overwritten.
+        XCTAssertEqual(buffer.samples(from: 3, count: 4), [3, 4, 5, 6])
+        XCTAssertEqual(buffer.samples(from: 4, count: 2), [4, 5])
+        XCTAssertNil(buffer.samples(from: 2, count: 2), "position 2 was overwritten")
+    }
+
+    func testAbsoluteReadOfUnwrittenSamplesIsNil() {
+        let buffer = RollingAudioBuffer(capacity: 8)
+        buffer.write([1, 2, 3], hostTime: 1)
+        XCTAssertNil(buffer.samples(from: 2, count: 2), "position 3 is not written yet")
+        XCTAssertNil(buffer.samples(from: -1, count: 1))
+    }
+
+    func testAbsoluteReadAgreesWithLatestSamples() {
+        let buffer = RollingAudioBuffer(capacity: 5)
+        buffer.write((0..<13).map(Float.init), hostTime: 1)
+        XCTAssertEqual(buffer.samples(from: 9, count: 4), buffer.latestSamples(4))
+    }
 }

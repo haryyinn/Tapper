@@ -71,7 +71,7 @@ final class ConfigurationStoreTests: XCTestCase {
         let bindings = PersistedCommandBindings(bindings: [
             CommandBinding(zone: .topLeft, command: Command(type: .shellCommand, target: "echo a"))
         ])
-        try store.save(bindings)
+        try store.save(bindings, userConfirmed: true)
         XCTAssertEqual(store.loadCommandBindings(), .loaded(bindings))
     }
 
@@ -108,7 +108,7 @@ final class ConfigurationStoreTests: XCTestCase {
         }
         return CalibrationProfile(
             id: UUID(),
-            algorithmVersion: "1.0",
+            algorithmVersion: CalibrationProfile.currentAlgorithmVersion,
             deviceIdentifier: "test-device",
             createdAt: Date(timeIntervalSince1970: 1_000),
             zones: zones,
@@ -121,6 +121,22 @@ final class ConfigurationStoreTests: XCTestCase {
         let profile = makeProfile()
         try store.save(profile)
         XCTAssertEqual(try store.loadCalibrationProfile(), profile)
+    }
+
+    func testProfileFromOtherAlgorithmVersionIsRefused() throws {
+        // ADR-017 §7: a profile built under other feature definitions is
+        // refused, never reinterpreted.
+        let current = makeProfile()
+        let stale = CalibrationProfile(
+            id: current.id, algorithmVersion: "1.0", deviceIdentifier: current.deviceIdentifier,
+            createdAt: current.createdAt, zones: current.zones,
+            normalization: current.normalization, configuration: current.configuration)
+        try store.save(stale)
+        XCTAssertThrowsError(try store.loadCalibrationProfile()) { error in
+            XCTAssertEqual(
+                error as? ConfigurationError,
+                .recalibrationRequired(profileAlgorithmVersion: "1.0"))
+        }
     }
 
     func testMissingCalibrationProfileReturnsNil() throws {
@@ -172,7 +188,7 @@ final class ConfigurationStoreTests: XCTestCase {
             PersistedCommandBindings(bindings: [
                 CommandBinding(
                     zone: .topLeft, command: Command(type: .shellCommand, target: "echo a"))
-            ]))
+            ]), userConfirmed: true)
 
         try store.restoreDefaults()
 

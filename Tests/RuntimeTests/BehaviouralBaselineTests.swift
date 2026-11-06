@@ -77,7 +77,8 @@ final class BehaviouralBaselineTests: XCTestCase {
         XCTAssertEqual(vector.zeroCrossingRate, 0x1.5555555555555p-4)
         XCTAssertEqual(vector.attackTime, 0x1.6aaaaaaaaaaabp-2)
         XCTAssertEqual(vector.decayTime, 0x1p-3)
-        XCTAssertEqual(vector.signalDuration, 0x1.25aaaaaaaaaabp+4)
+        // τ = 400 samples = 8.333 ms, so τ·ln(10) = 19.188 ms (§14.13.3).
+        XCTAssertEqual(vector.signalDuration, 0x1.330310b4768f3p+4)
     }
 
     func testFeatureExtractionIsRepeatable() throws {
@@ -132,8 +133,8 @@ final class BehaviouralBaselineTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .success)
         XCTAssertEqual(outcome.zone, .topLeft, "canonical tie-break order")
-        XCTAssertEqual(outcome.distance, 0x1.b17ec8a83af4ap+11)
-        XCTAssertEqual(outcome.confidence, 0x1.8e9ce17504512p+6)
+        XCTAssertEqual(outcome.distance, 0x1.b17eeda42eec3p+11)
+        XCTAssertEqual(outcome.confidence, 0x1.8e9ce156b82b8p+6)
     }
 
     // MARK: State machine baseline
