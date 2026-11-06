@@ -2420,6 +2420,38 @@ CalibrationMetadata supports:
 
 Recognition algorithms shall ignore this information during classification.
 
+### Algorithm Version Compatibility (ADR-017 §7)
+
+The algorithm version identifies the feature definitions a profile was built
+under. A profile whose algorithm version differs from the running algorithm
+version shall be **refused at load** with an explanation that recalibration is
+required. No migration is attempted: profiles contain no audio, so features
+cannot be recomputed under new definitions.
+
+| Algorithm version | Feature definitions |
+|---|---|
+| 1.0 | Frame-aligned measurement (superseded) |
+| 2.0 | Event-anchored measurement, decay-based Signal Duration (ADR-017) |
+| 2.1 | 70 ms event window; calibration-derived duration limit |
+
+### Derived Detection Parameters
+
+From version 2.1 a profile carries the detection parameters derived from its
+own calibration samples (`ALGORITHM` §19.6):
+
+```swift
+struct DerivedDetectionParameters {
+
+    let maximumSignalDurationMilliseconds: Double
+
+    let sampleCount: Int
+
+}
+```
+
+Runtime recognition shall use these in place of the default constants. They
+contain no audio.
+
 ---
 
 # 7.8 Calibration Session

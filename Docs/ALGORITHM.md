@@ -753,7 +753,7 @@ No raw audio samples are compared during runtime classification.
 ### 14.1.1 Measurement Domain (ADR-017)
 
 Every feature in this section shall be computed over the **event window** of
-§19.5 — a window anchored at the localised onset of the event — and never over
+§23.4.1 — a window anchored at the localised onset of the event — and never over
 the poll-aligned analysis frame that triggered detection.
 
 This is not a matter of preference. A quantity measured against the analysis
@@ -1204,7 +1204,7 @@ which corrects the measurement architecture while holding the feature set fixed.
 Correcting it requires an envelope-based definition, which changes what the
 feature measures and therefore belongs to the representation work of Phase 2.
 
-The feature shall continue to be computed over the event window of §19.5 like
+The feature shall continue to be computed over the event window of §23.4.1 like
 every other, so its value changes with the anchoring even though its definition
 does not.
 
@@ -3594,6 +3594,31 @@ Examples include:
 
 Duration is evaluated using the Signal Duration feature.
 
+A censored duration (§14.13.5) shall never be compared against the duration
+limit: the event outlasted the observation window, so its total duration is
+unknown, not excessive (ADR-017 §4). Only an uncensored duration may cause
+rejection for exceeding the limit.
+
+The limit is **derived during calibration** from the user's own taps
+(ADR-017 §1, stage 5) and stored in the calibration profile. During
+calibration itself no upper duration limit applies, because the limit does not
+exist until the taps it is derived from have been measured. The derivation is
+Tukey's far-out fence over the Signal Duration of every accepted calibration
+sample:
+
+```
+MaximumDuration = max( Q3 + 3 * (Q3 - Q1), 25 ms )
+```
+
+The 25 ms floor is the previous fixed limit, so a derived limit is never
+stricter than the old one. Censored durations participate in the quartiles at
+full weight, as §14.13.5 requires of statistics.
+
+*Basis.* Hardware calibration at CP-2 (2026-10-26, MacBook Air) measured a
+median decay time constant of 16.3 ms (p10 9.4 ms, p90 32.5 ms), so a median
+tap fades by 20 dB in about 37 ms. The fixed 25 ms limit rejected 16% of
+natural taps.
+
 ---
 
 # 19.7 Frequency Rejection
@@ -3794,6 +3819,9 @@ It is used only for event validation.
 # 19.18 Rejection Logging
 
 Every rejected candidate shall include a rejection reason.
+
+A declined decay estimate (§14.13.6) is logged as its own reason, *Decay Not
+Measurable*, distinct from a duration outside the configured limits.
 
 Examples:
 
@@ -5224,22 +5252,78 @@ end function
 
 Only transient acoustic events proceed further.
 
+Detection is the only decision taken on the poll-aligned frame, and it uses only
+the frame's peak magnitude, which is alignment-invariant (ADR-017 §2). Every
+quality judgement is deferred until the event has been extracted.
+
+### 23.4.1 Event Localisation and Extraction (ADR-017)
+
+A detected frame identifies that something happened, not where. Before any
+measurement the event shall be localised in the continuous sample stream and
+extracted at an absolute position:
+
+1. **Peak.** The event peak is the sample of largest magnitude in the filtered
+   stream from the detected frame's peak up to the maximum attack interval
+   after it. The frame may have captured only the beginning of the attack.
+2. **Onset.** The onset is the earliest sample within the maximum onset
+   look-back before the peak whose magnitude reaches the onset fraction of the
+   peak (the same 10% fraction used by Attack Time, §14.11).
+3. **Event window.** The event window begins a fixed pre-roll before the onset
+   and spans the event-window length. It is read from the stream by absolute
+   position once all of its samples have been captured; recognition waits for
+   them rather than measuring a partial event.
+4. **Filtering.** The band-pass filter runs over a warm-up interval preceding
+   the event window, so its start-up transient never falls inside the window.
+
+A detection whose frame peak lies inside an event window already extracted
+belongs to that event and shall not start a second one.
+
+| Parameter | Version 1 value | Status |
+|---|---|---|
+| Event-window length | 3360 samples (70 ms) | Set from hardware data, see below |
+| Pre-roll | 48 samples (1 ms) | Provisional |
+| Maximum onset look-back | 480 samples (10 ms) | Provisional |
+| Maximum attack interval | 480 samples (10 ms) | Provisional |
+| Filter warm-up | 480 samples (10 ms) | Provisional |
+
+The event window is longer than the 1920-sample analysis frame, which remains
+the unit of detection (§11). The spectrum of the event window is taken with a
+4096-point FFT.
+
+*Basis.* At CP-2 the 40 ms window was outlasted by 92.5% of natural taps, which
+left no decay fit high-confidence. With the measured median time constant of
+16.3 ms, the fit's −25 dB target is reached about 50 ms after onset; 70 ms
+covers the median tap with margin. Detection latency is bounded by the window,
+the maximum attack interval and one poll interval: 70 + 10 + 20 = 100 ms, within
+the §24 target.
+
+*Deviation from ADR-017 §3.* ADR-017 asks for the window to be derived per
+calibration session. It is instead a constant set once from measured hardware
+data, because a per-session window would change the measurement domain between
+the calibration and the runtime that uses it, and would make profiles from
+different sessions incomparable. Decays that outlast the window remain censored
+(§14.13.5) rather than rejected.
+
 ---
 
 ## 23.5 Candidate Validation
 
 ```text
-function ValidateCandidate()
+function ValidateCandidate(EventWindow)
 
     if SignalClipped
 
         return False
 
+    if DecayEstimate == NONE
+
+        return False                      // declined, §14.13.6
+
     if SignalDuration < MinimumDuration
 
         return False
 
-    if SignalDuration > MaximumDuration
+    if SignalDuration > MaximumDuration and not Censored
 
         return False
 
@@ -5257,6 +5341,11 @@ end function
 ```
 
 Validation rejects poor-quality events before expensive processing occurs.
+
+Every check is measured over the event window of §23.4.1, never over the frame
+that triggered detection. RMS and SNR use the filtered, pre-normalization event
+window. A declined decay estimate is reported as its own rejection reason,
+distinct from a duration outside the limits (§14.13.6).
 
 ---
 
@@ -7827,7 +7916,7 @@ Where:
 
 | Property | Value |
 |----------|-------|
-| Algorithm Version | 1.0 |
+| Algorithm Version | 2.1 (event-anchored measurement, ADR-017) |
 | Recognition Method | Deterministic Statistical Classification |
 | DSP Engine | FFT + Butterworth |
 | Classifier | Mahalanobis Distance |

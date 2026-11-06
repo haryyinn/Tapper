@@ -1,6 +1,6 @@
 # Decay Estimator — Design Note (for review)
 
-**Status:** Proposed. Not yet specification. Review before `ALGORITHM` §14 is updated.
+**Status:** Accepted. Specified in `ALGORITHM` §14.13 and implemented as `DSP.DecayEstimator`.
 
 Every figure below was measured by running candidate estimators against
 synthetic signals with known decay constants, through the project's real

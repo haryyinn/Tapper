@@ -802,10 +802,14 @@ Responsibilities:
 - compute mean vectors
 - compute covariance matrices
 - compute thresholds
+- derive detection parameters (the maximum Signal Duration, `ALGORITHM` §19.6)
 - validate statistical model
 - assemble CalibrationProfile
 
 No further user interaction occurs during this state.
+
+Sample validation during collection applies no upper Signal Duration limit;
+that limit is one of the parameters this state derives.
 
 ---
 

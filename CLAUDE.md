@@ -12,14 +12,14 @@
 
 Before making ANY code changes, read the following documents in order:
 
-1. Docs/11_IMPLEMENTATION_RULES.md
-2. Docs/12_AI_ENGINEERING_INSTRUCTIONS.md
-3. Docs/01_TRD.md
-4. Docs/03_ARCHITECTURE.md
-5. Docs/04_ALGORITHM.md
-6. Docs/05_API_REFERENCE.md
-7. Docs/06_IMPLEMENTATION_PLAN.md
-8. Docs/07_TEST_PLAN.md
+1. Docs/IMPLEMENTATION_RULES.md
+2. Docs/AI_ENGINEERING_INSTRUCTIONS.md
+3. Docs/TRD.md
+4. Docs/ARCHITECTURE.md
+5. Docs/ALGORITHM.md
+6. Docs/API_REFERENCE.md
+7. Docs/IMPLEMENTATION_PLAN.md
+8. Docs/TEST_PLAN.md
 
 Do not begin implementation until these documents have been understood.
 
